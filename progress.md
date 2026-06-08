@@ -10,7 +10,7 @@
 > Post-compact restore block. Read this after `/compact` or at any new session start.
 > Update after every milestone. Keep under 40 lines.
 
-**Last updated:** 2026-06-08 | **Milestones since /compact:** 7
+**Last updated:** 2026-06-09 | **Milestones since /compact:** 8
 
 ```
 APP: onetrust-automation — FastAPI backend automating authorized OneTrust sandbox workflows via Playwright
@@ -23,8 +23,9 @@ FEATURES DONE:
   websites (POST /add_app) — full 13-step wizard ✓
   mapper (GET /mapper/default, POST /mapper/resolve) — BE ✓
   M8 debug responses + email prefill + scan polling — BE ✓
+  M9 Mac/cross-platform compatibility — config extra="ignore", venv paths, .vscode/settings.json ✓
 
-ACTIVE: COMPLETE — M8 done. Run: cd backend && uvicorn app.main:app --reload
+ACTIVE: COMPLETE — M9 done. Run: source .venv/bin/activate && cd backend && uvicorn app.main:app --reload
 
 NEXT: none
 
@@ -33,9 +34,11 @@ KEY DECISIONS:
   features/onetrust/ flat module (M4 restructure) |
   tests skipped — per user decision |
   no DB — email from .env only |
-  /add_app full 13-step wizard including scan polling — per M8 spec
+  /add_app full 13-step wizard including scan polling — per M8 spec |
+  pydantic-settings validation_alias for all fields + extra="ignore" — per M9 spec |
+  development is LOCAL ONLY — no git automation
 GAPS: none
-MILESTONES SINCE /compact: 7
+MILESTONES SINCE /compact: 8
 ```
 
 ---

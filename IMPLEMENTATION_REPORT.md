@@ -1,0 +1,561 @@
+# Implementation Report — OneTrust Automation Backend
+
+Generated: 2026-06-08
+
+---
+
+## 1. Summary of Implemented Changes
+
+The FastAPI + Playwright backend for authorized OneTrust sandbox automation was built in five milestones:
+
+- **M1–M3**: Core scaffold, login endpoint, initial `/add_app` (click-only stub)
+- **M4**: Structural cleanup — consolidated all features under `features/onetrust/`; removed dead code
+- **M5** (current): Enhanced `/add_app` to complete the full Add Website wizard (7 sequential steps); added `mapper.py` service; added `GET /mapper/default` and `POST /mapper/resolve` endpoints
+
+---
+
+## 2. Final Folder Tree
+
+```
+scrapper/
+  backend/
+    app/
+      __init__.py
+      main.py                          FastAPI app, lifespan, /health
+      core/
+        __init__.py
+        config.py                      pydantic-settings (all env vars)
+        errors.py                      AppError + 3 exception handlers
+      features/
+        __init__.py
+        onetrust/
+          __init__.py
+          auth.py                      login_onetrust, is_logged_in, SSO wait, modal handling
+          browser.py                   BrowserManager singleton (persistent Chromium)
+          mapper.py                    DEFAULT_EXPERIENCE_KIT, get_experience_kit_for_url
+          router.py                    All routes: /auth/login, /add_app, /mapper/*
+          schemas.py                   All Pydantic models
+          websites.py                  add_app_flow (7-step wizard)
+    screenshots/
+      .gitkeep                         Error screenshots land here (gitignored)
+    .env.example
+    requirements.txt
+```
+
+---
+
+## 3. APIs
+
+### `GET /health`
+```json
+{ "status": "ok", "browser_ready": false }
+```
+
+### `POST /auth/login`
+Request: `{}`
+
+Success:
+```json
+{
+  "status": "logged in",
+  "message": "OneTrust login completed and sandbox page reached",
+  "current_url": "https://uat-de.onetrust.com/cookies/websites",
+  "handled_modals": ["scheduled maintenance"]
+}
+```
+
+SSO timeout:
+```json
+{
+  "status": "SSO issue",
+  "message": "SSO did not complete within timeout. Please complete SSO manually in the opened browser, then retry.",
+  "current_url": "https://pingidentity.pfizer.com/..."
+}
+```
+
+### `POST /add_app`
+See Section 4.
+
+### `GET /mapper/default`
+```json
+{
+  "default_experience_kit": "US- Geolocation Category test",
+  "mode": "default_for_all_urls"
+}
+```
+
+### `POST /mapper/resolve`
+Request: `{ "url": "https://www.example.com" }`
+```json
+{
+  "url": "https://www.example.com",
+  "experience_kit": "US- Geolocation Category test",
+  "mode": "default_for_all_urls"
+}
+```
+
+---
+
+## 4. `/add_app` Request & Response Examples
+
+### Request
+```json
+{ "url": "https://www.pfizerguidesources.com" }
+```
+
+### Success response
+```json
+{
+  "status": "new user wizard selection done",
+  "message": "Website URL added and default experience kit selected.",
+  "input_url": "https://www.pfizerguidesources.com",
+  "selected_kit": "US- Geolocation Category test",
+  "current_url": "https://uat-de.onetrust.com/cookies/...",
+  "screenshot": null,
+  "steps": [
+    { "step": "confirm_login",               "status": "completed" },
+    { "step": "open_websites_page",           "status": "completed" },
+    { "step": "click_add_website",            "status": "completed" },
+    { "step": "fill_website_url",             "status": "completed", "value": "https://www.pfizerguidesources.com" },
+    { "step": "continue_to_banner_setup",     "status": "completed" },
+    { "step": "select_experience_kit",        "status": "completed", "selected_kit": "US- Geolocation Category test" },
+    { "step": "click_next_after_kit_selection", "status": "completed" }
+  ]
+}
+```
+
+### Not logged in
+```json
+{
+  "status": "not logged in",
+  "message": "Please call /auth/login first or complete SSO in the opened browser.",
+  "input_url": "https://www.pfizerguidesources.com",
+  "current_url": "https://uat-de.onetrust.com/auth/login",
+  "steps": [
+    { "step": "confirm_login", "status": "failed", "message": "Not logged in" }
+  ]
+}
+```
+
+### Step failure (example: kit not found)
+```json
+{
+  "status": "failed",
+  "message": "Step 'select_experience_kit' failed: ...",
+  "input_url": "https://www.pfizerguidesources.com",
+  "selected_kit": "US- Geolocation Category test",
+  "current_url": "https://uat-de.onetrust.com/cookies/...",
+  "screenshot": "screenshots/select_experience_kit_20260608_152500.png",
+  "steps": [
+    { "step": "confirm_login",           "status": "completed" },
+    { "step": "open_websites_page",      "status": "completed" },
+    { "step": "click_add_website",       "status": "completed" },
+    { "step": "fill_website_url",        "status": "completed", "value": "https://www.pfizerguidesources.com" },
+    { "step": "continue_to_banner_setup","status": "completed" },
+    { "step": "select_experience_kit",   "status": "failed", "message": "Experience kit card not found" }
+  ]
+}
+```
+
+---
+
+## 5. Files Changed
+
+| File | Change |
+|------|--------|
+| `backend/app/features/onetrust/mapper.py` | **Created** — default kit constant + resolver function |
+| `backend/app/features/onetrust/schemas.py` | **Updated** — added `StepResult`, `MapperDefaultResponse`, `MapperResolveRequest`, `MapperResolveResponse`; updated `AddAppResponse` |
+| `backend/app/features/onetrust/websites.py` | **Rewritten** — replaced `click_add_website` with `add_app_flow` (7 steps) |
+| `backend/app/features/onetrust/router.py` | **Updated** — `/add_app` now calls `add_app_flow`; added `/mapper/default` + `/mapper/resolve` |
+
+---
+
+## 6. Default Experience Kit Mapping
+
+Defined in `backend/app/features/onetrust/mapper.py`:
+
+```python
+DEFAULT_EXPERIENCE_KIT = "US- Geolocation Category test"
+
+def get_experience_kit_for_url(url: str) -> str:
+    return DEFAULT_EXPERIENCE_KIT
+```
+
+All URLs currently map to this single default. The function signature is designed so domain-specific logic can be added later without changing callers.
+
+---
+
+## 7. Login Check Before `/add_app`
+
+`add_app_flow` in `websites.py` calls `is_logged_in(page)` as Step 1 before any navigation:
+
+```python
+if not await is_logged_in(page):
+    steps.append({"step": "confirm_login", "status": "failed", "message": "Not logged in"})
+    return { "status": "not logged in", ... }
+```
+
+`is_logged_in` checks:
+- URL contains any of: `onetrust.com/home`, `/welcome`, `/cookies`, `/privacy`, `/assessments`
+- OR page body contains: `"Sandbox Environment"`, `"My apps"`, `"Cookie Consent"`
+
+---
+
+## 8. Selectors Used
+
+### Add website button (Step 3)
+```python
+page.get_by_role("button", name=re.compile(r"Add website", re.I))
+# fallback:
+page.get_by_text("Add website", exact=False)
+# fallback:
+page.locator("button:has-text('Add website')")
+```
+
+### URL input (Step 4)
+```python
+page.get_by_label(re.compile(r"URL", re.I))
+# fallback:
+page.locator("input[placeholder*='example.com' i]")
+# fallback:
+page.locator("input[type='url']")
+```
+
+### Continue to banner setup button (Step 5)
+```python
+page.get_by_role("button", name=re.compile(r"Continue to banner setup", re.I))
+# fallback:
+page.locator("button:has-text('Continue to banner setup')")
+```
+
+### US- Geolocation Category test card (Step 6)
+```python
+page.get_by_text(re.compile(r"US.{0,3}Geolocation Category test", re.I))
+# fallback (scroll into view, then click):
+await kit_locator.first.scroll_into_view_if_needed(timeout=5000)
+# fallback (search box):
+search_box = page.get_by_role("searchbox")
+await search_box.fill("US- Geolocation Category test")
+# then click the matching card
+```
+
+### Next button (Step 7)
+```python
+page.get_by_role("button", name=re.compile(r"^Next$", re.I))
+# fallback:
+page.locator("button:has-text('Next')")
+```
+
+---
+
+## 9. Error-Handling Behavior
+
+Each step in `add_app_flow` is wrapped in `try/except`:
+- On failure: logs the error with step name + current URL
+- Appends `{"step": NAME, "status": "failed", "message": str(exc)}` to `steps`
+- Returns immediately with `status: "failed"` + all partial steps completed so far
+- Does **not** continue to remaining steps after a failure
+
+The outer `except Exception` pattern ensures no raw Python exceptions escape to the API response. All errors are converted to JSON with a `"status": "failed"` shape.
+
+---
+
+## 10. Screenshot-on-Error Behavior
+
+On any step failure, `browser_manager.screenshot_on_error(step_name)` is called:
+- Saves a timestamped PNG to `backend/screenshots/` (e.g. `select_experience_kit_20260608_152500.png`)
+- The path is returned in the API response as the `screenshot` field
+- Screenshots are **for debugging only** — not used as automation input
+- `screenshots/*.png/jpg/jpeg/webp` are gitignored
+
+---
+
+## 11. How to Run
+
+```bash
+cd backend
+cp .env.example .env        # fill ONETRUST_EMAIL
+pip install -r requirements.txt
+playwright install chromium
+uvicorn app.main:app --reload
+```
+
+Required `.env` values:
+```
+ONETRUST_BASE_URL=https://uat-de.onetrust.com
+ONETRUST_LOGIN_URL=https://uat-de.onetrust.com/auth/login
+ONETRUST_EMAIL=your.email@pfizer.com
+PLAYWRIGHT_HEADLESS=false
+```
+
+Typical flow:
+1. `POST /auth/login` — opens browser, fills email, waits for SSO (complete manually if needed)
+2. `POST /add_app {"url": "https://www.pfizerguidesources.com"}` — runs the full wizard
+
+---
+
+## 12. Assumptions and Limitations
+
+| Item | Detail |
+|------|--------|
+| Kit selection | Matched with `re.compile(r"US\s*-?\s*Geolocation Category test", re.I)` — tolerates `"US-"`, `"US -"`, `"US - "` spacing variants |
+| Wizard stops after Step 7 | After clicking Next on the experience kit page, the flow stops and returns. No further pages are automated in this phase. |
+| URL field detection | Three fallback selectors used; if none match, the step fails with a screenshot |
+| Continue button enabled | `wait_for(state="enabled", timeout=15000)` — raises `RuntimeError` with clear message if button doesn't enable |
+| SSO passthrough | SSO/PingID/GlobalProtect/MFA are never bypassed. If SSO requires manual action, `/auth/login` returns `"SSO issue"` and the browser stays open for manual completion |
+| Persistent profile | Session is stored in `PLAYWRIGHT_USER_DATA_DIR` (default: `.playwright/onetrust-profile`). Delete this folder to force a fresh login |
+| Single browser tab | The automation reuses one persistent page across all API calls |
+
+---
+
+## 13. Manual Test Results
+
+Not yet tested against the live OneTrust sandbox — testing requires VPN + Pfizer SSO passthrough on the user's machine. All code verified with `ruff check` + `mypy` (zero errors, 13 source files).
+
+---
+
+## 14. Hardening Pass (M6) — 2026-06-08
+
+Changes made before live testing:
+
+### What changed
+
+| Fix | File | Detail |
+|-----|------|--------|
+| Mutable default | `schemas.py` | `steps: list[StepResult] = []` → `Field(default_factory=list)` |
+| URL validation | `schemas.py` | `@field_validator("url")` on `AddAppRequest` — rejects non-http(s) with 422 |
+| Continue button state | `websites.py` Step 4 | `wait_for("visible")` → `wait_for("enabled", timeout=15000)` + explicit RuntimeError |
+| Kit regex | `websites.py` Step 6 | `US.{0,3}` → `US\s*-?\s*` (tolerates hyphen spacing variants) |
+| Next button state | `websites.py` Step 6 | `wait_for("visible")` → `wait_for("enabled", timeout=10000)` + explicit RuntimeError |
+| Post-nav login check | `websites.py` Step 2 | After goto, checks URL for SSO indicators; returns `"not logged in"` if redirected |
+
+### .gitignore confirmed
+
+All required patterns present:
+```
+.venv/              ✓
+__pycache__/        ✓
+.mypy_cache/        ✓
+.ruff_cache/        ✓
+.pytest_cache/      ✓
+.env                ✓
+.playwright/        ✓
+backend/screenshots/*.png   ✓
+backend/screenshots/*.jpg   ✓
+backend/screenshots/*.jpeg  ✓
+backend/screenshots/*.webp  ✓
+```
+
+### Verification
+
+- `ruff check app/` — All checks passed
+- `mypy app/ --ignore-missing-imports` — Success: no issues found in 13 source files
+
+### Live test status
+
+Not yet tested — hardening pass complete and ready for first live run.
+
+---
+
+## 15. Portability Pass (M7) — 2026-06-08
+
+### Critical runtime fix
+
+`locator.wait_for(state="enabled")` is **not a valid Playwright state** — valid values are `"attached"`, `"detached"`, `"visible"`, `"hidden"`. This would raise `ValueError` at runtime on Steps 4 and 6.
+
+**Fixed in `websites.py`** using the correct Playwright assertion API:
+```python
+from playwright.async_api import expect
+
+# Step 4 — Continue to banner setup
+await expect(continue_btn.first).to_be_enabled(timeout=15000)
+
+# Step 6 — Next button after kit selection
+await expect(next_btn.first).to_be_enabled(timeout=10000)
+```
+
+### Other changes
+
+| Fix | File | Detail |
+|-----|------|--------|
+| `expect` import | `websites.py` | Added `from playwright.async_api import Page, expect` |
+| MapperResolveRequest validator | `schemas.py` | Added same `@field_validator("url")` as `AddAppRequest` |
+| `backend/.gitignore` | Created | Backend-scoped gitignore for portability |
+| `backend/README.md` | Created | Windows setup + run instructions |
+
+### Packaging verification
+
+`backend_onetrust.zip` created at repo root. Contents:
+
+```
+backend/.env.example          ✓
+backend/.gitignore             ✓
+backend/IMPLEMENTATION_REPORT.md  ✓
+backend/README.md              ✓
+backend/app/__init__.py        ✓
+backend/app/core/...           ✓
+backend/app/features/onetrust/ ✓
+backend/app/main.py            ✓
+backend/requirements.txt       ✓
+backend/screenshots/.gitkeep   ✓
+```
+
+Excluded from zip:
+- `__pycache__/` ✓
+- `.mypy_cache/` ✓
+- `.ruff_cache/` ✓
+- `.pytest_cache/` ✓
+- `.venv/` ✓
+- `.playwright/` ✓
+- `.env` ✓
+- `screenshots/*.png/jpg/jpeg/webp` ✓
+- SPL orchestration files (`agents.md`, `progress.md`) ✓
+
+### Local checks (M7)
+
+```
+python -m compileall app/  — OK (no syntax errors)
+ruff check app/            — All checks passed
+mypy app/ --ignore-missing-imports — Success: no issues found in 13 source files
+```
+
+---
+
+## 16. M8 — Debug Responses + Email Prefill + Extended /add_app (Steps 8–13)
+
+Generated: 2026-06-08
+
+### APIs Updated
+
+- `POST /auth/login` — now returns `failed_step`, `steps[]`, and `debug` object on failure/SSO issue
+- `POST /add_app` — extended from 7 to 13 steps; final status is `"website url scan_status completed"`; adds `scan_status`, `matched_display_url`, `debug` to response
+
+### New Schema: DebugInfo
+
+All optional fields. Never includes passwords, cookies, auth tokens, or full HTML.
+
+Fields: `step`, `current_url`, `page_title`, `timestamp`, `screenshot`, `browser_headless`, `user_data_dir`, `possible_reason`, `next_action`, `visible_markers`, `exception_type`, `exception_message`
+
+### Email Prefill Logic (`/auth/login`)
+
+Step `fill_email_or_confirm_prefilled_email`:
+1. Read current value of email input
+2. If empty → fill from `ONETRUST_EMAIL` (`email_action: "filled_from_env"`)
+3. If matches env email (case-insensitive) → keep (`email_action: "kept_existing"`)
+4. If different → clear and fill (`email_action: "replaced_existing"`)
+Email is masked in debug/log output (`s*****@pfizer.com` format).
+
+### /add_app — Full 13-Step Flow
+
+| Step | Name | Action |
+|------|------|--------|
+| 1 | `confirm_login` | Check `is_logged_in()` |
+| 2 | `open_websites_page` | Navigate to `/cookies/websites` |
+| 3 | `click_add_website` | Click Add website button |
+| 4 | `fill_website_url` | Fill URL field |
+| 5 | `continue_to_banner_setup` | Click Continue button |
+| 6 | `select_experience_kit` | Click kit card (scroll/search fallback) |
+| 7 | `click_next_after_kit_selection` | Click Next |
+| 8 | `wait_review_configurations_page` | Wait for "Review configurations" heading |
+| 9 | `click_accept_all_preview` | Click Accept All (main page → frames; skips if Confirm already enabled) |
+| 10 | `click_confirm` | Wait until Confirm enabled, then click |
+| 11 | `wait_return_to_websites_page` | Wait for `/cookies/websites` URL |
+| 12 | `find_website_row` | Normalize URL, search table, return matched row text |
+| 13 | `wait_scan_status_completed` | Poll every 5s up to `ONETRUST_SCAN_TIMEOUT_MS` |
+
+### URL Normalization (Step 12)
+
+Input `https://www.pfizerguidesources.com` → search with `www.pfizerguidesources.com`.
+Also tries `pfizerguidesources.com` (without www) if first not found.
+
+### Scan Status Polling (Step 13)
+
+- Poll interval: 5 seconds
+- Timeout: `ONETRUST_SCAN_TIMEOUT_MS` (default 300000 ms / 5 minutes)
+- Terminates on: "Completed" (success), "Failed"/"Error" in row text (scan failed), or timeout (failed)
+- Attempts to click refresh button if available between polls
+
+### New Env Variable
+
+`ONETRUST_SCAN_TIMEOUT_MS=300000` — configurable scan wait timeout
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `backend/app/features/onetrust/schemas.py` | Added `DebugInfo`; added fields to `LoginResponse`, `AddAppResponse`, `StepResult` |
+| `backend/app/features/onetrust/auth.py` | Renamed `fill_email_and_next` → `fill_email_or_confirm_prefilled_email`; added prefill logic, debug helpers, step tracking |
+| `backend/app/features/onetrust/websites.py` | Added URL normalize helpers, `_build_debug`, steps 8–13 |
+| `backend/app/core/config.py` | Added `scan_timeout_ms: int = 300000` |
+| `backend/.env.example` | Added `ONETRUST_SCAN_TIMEOUT_MS=300000` |
+
+### Verification
+
+```
+python -m compileall app/  — OK (no syntax errors)
+ruff check app/            — All checks passed
+mypy app/ --ignore-missing-imports — Success: no issues found in 13 source files
+```
+
+---
+
+## 17. M9 - Mac Runtime Setup Fix
+
+Generated: 2026-06-08
+
+### Changes
+
+- Fixed pydantic-settings v2 env handling in `backend/app/core/config.py`.
+- Added `SettingsConfigDict(extra="ignore")` so extra `.env` keys do not crash startup.
+- Added `onetrust_scan_timeout_ms` config field and kept env variable `ONETRUST_SCAN_TIMEOUT_MS`.
+- `ONETRUST_EMAIL` no longer crashes the app at import time.
+- `/auth/login` returns a clean configuration error JSON response if `ONETRUST_EMAIL` is missing.
+- Confirmed no `locator.wait_for(state="enabled")` or `wait_for("enabled")` usage remains.
+- Added Mac setup and VS Code interpreter instructions to `backend/README.md`.
+- Added `backend/check_setup.py`.
+- Confirmed `backend/.env.example` has the expected runtime keys.
+- Confirmed `backend/requirements.txt` includes the required setup/runtime packages.
+
+### Commands run and results
+
+| Command | Result |
+|---------|--------|
+| `python -m pip install --upgrade pip` | Passed; pip upgraded to 26.1.2 in the existing backend venv |
+| `pip install -r requirements.txt` | Passed; requirements satisfied |
+| `python -m playwright install chromium` | Timed out twice while checking/installing Chromium in this Windows environment |
+| `python check_setup.py` | Passed; `SETUP OK` |
+| `python -m compileall app` | Passed |
+| `ruff check app/` | Passed |
+| `mypy app/` | Passed |
+| `python -m uvicorn app.main:app --reload` | Direct long-running command timed out; controlled uvicorn startup on `127.0.0.1:8010` passed and was stopped |
+
+---
+
+## 18. M10 - Cross-platform Mac/Windows VS Code Setup
+
+Generated: 2026-06-09
+
+### Changes
+
+- README now has separate Mac and Windows setup flows from the repo root.
+- `.vscode/settings.json` added without a hardcoded interpreter path.
+- No hardcoded Windows runtime paths remain in source files.
+- Runtime Playwright paths use `pathlib.Path`; the user data dir resolves via `Path(settings.playwright_user_data_dir).resolve()`.
+- Screenshots directory is created with `mkdir(parents=True, exist_ok=True)`.
+- Root `.gitignore` updated for Mac/Windows artifacts, Python caches, Playwright output, env files, and debug screenshots.
+- Cache/generated files removed from the working package while keeping `backend/screenshots/.gitkeep`.
+
+### Commands run and results
+
+| Command | Result |
+|---------|--------|
+| `rg -n -F -e "\\Scripts\\" -e "Activate.ps1" -e "C:\\" -e "copy .env.example .env" -e "/Users/" -e "Users\\" .` | Matches expected setup documentation only |
+| `python check_setup.py` | Failed in this Windows workspace: `No module named 'playwright'` in the available system Python |
+| `python -m compileall app` | Passed |
+| `ruff check app/` | Passed |
+| `mypy app/ --ignore-missing-imports` | Passed |
+| `python -m uvicorn app.main:app --host 127.0.0.1 --port 8010` | Failed before startup: `No module named 'playwright'` in the available system Python |
+
+### Remaining issue
+
+The current Windows workspace does not have a project virtual environment or Playwright installed for the available system Python, so `check_setup.py` and uvicorn startup cannot complete here until dependencies are installed.

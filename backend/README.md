@@ -2,33 +2,73 @@
 
 FastAPI + Playwright backend that automates authorized OneTrust sandbox workflows.
 
+## Setup (Mac)
+
+```bash
+cd <project-root>          # e.g. ~/scrapper or wherever you cloned the repo
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+cd backend
+pip install -r requirements.txt
+python -m playwright install chromium
+cp .env.example .env
+code .env                  # fill in ONETRUST_EMAIL
+python check_setup.py
+python -m uvicorn app.main:app --reload
+```
+
+### VS Code Interpreter (Mac)
+
+Cmd + Shift + P → Python: Select Interpreter → select the `.venv` interpreter inside your project root:
+
+```text
+<project-root>/.venv/bin/python
+```
+
 ## Setup (Windows)
 
 ```powershell
-cd backend
+cd C:\Users\91997\scrapper
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
+cd backend
 pip install -r requirements.txt
 python -m playwright install chromium
 copy .env.example .env
+code .env
+python check_setup.py
+python -m uvicorn app.main:app --reload
 ```
 
-Edit `.env` and fill in your values:
+### VS Code Interpreter (Windows)
 
+Ctrl + Shift + P -> Python: Select Interpreter ->
+
+```text
+<repo>\.venv\Scripts\python.exe
 ```
+
+## Environment
+
+After copying `.env.example`, edit `backend/.env` and fill in your values:
+
+```env
 ONETRUST_BASE_URL=https://uat-de.onetrust.com
 ONETRUST_LOGIN_URL=https://uat-de.onetrust.com/auth/login
 ONETRUST_EMAIL=your.email@pfizer.com
 PLAYWRIGHT_HEADLESS=false
 PLAYWRIGHT_USER_DATA_DIR=.playwright/onetrust-profile
 PLAYWRIGHT_TIMEOUT_MS=90000
+ONETRUST_SCAN_TIMEOUT_MS=300000
 ```
 
 ## Run
 
-```powershell
-uvicorn app.main:app --reload
+```bash
+cd backend
+python -m uvicorn app.main:app --reload
 ```
 
 API available at `http://localhost:8000`
@@ -47,7 +87,7 @@ A browser window opens. Complete SSO/PingID if prompted. Returns `"status": "log
 POST http://localhost:8000/add_app
 {"url": "https://www.pfizerguidesources.com"}
 ```
-Runs the full 7-step Add Website wizard and returns step-by-step results.
+Runs the full 13-step Add Website wizard through to scan status Completed.
 
 **3. Check mapper**
 ```

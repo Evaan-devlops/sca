@@ -21,7 +21,7 @@ class BrowserManager:
         if self._playwright is not None:
             return
 
-        user_data_dir = Path(settings.playwright_user_data_dir)
+        user_data_dir = Path(settings.playwright_user_data_dir).resolve()
         user_data_dir.mkdir(parents=True, exist_ok=True)
         SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
 

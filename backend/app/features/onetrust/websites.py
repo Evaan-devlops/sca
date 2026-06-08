@@ -589,7 +589,7 @@ async def add_app_flow(url: str) -> dict:
     step_name = "wait_scan_status_completed"
     logger.info("[%s] started | url=%s", step_name, page.url)
     try:
-        timeout_ms = settings.scan_timeout_ms
+        timeout_ms = settings.onetrust_scan_timeout_ms
         poll_interval_ms = 5000
         elapsed = 0
         scan_status: str | None = None
@@ -664,7 +664,7 @@ async def add_app_flow(url: str) -> dict:
             page, step_name, exc=exc, screenshot=screenshot,
             possible_reason="Scan timed out or row could not be found during polling",
             next_action=(
-                f"Increase ONETRUST_SCAN_TIMEOUT_MS (currently {settings.scan_timeout_ms}ms) "
+                f"Increase ONETRUST_SCAN_TIMEOUT_MS (currently {settings.onetrust_scan_timeout_ms}ms) "
                 "or check scan status manually"
             ),
         )

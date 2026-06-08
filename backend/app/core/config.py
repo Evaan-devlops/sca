@@ -1,17 +1,46 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    onetrust_base_url: str = "https://uat-de.onetrust.com"
-    onetrust_login_url: str = "https://uat-de.onetrust.com/auth/login"
-    onetrust_email: str = ""
-    playwright_headless: bool = False
-    playwright_user_data_dir: str = ".playwright/onetrust-profile"
-    playwright_timeout_ms: int = 90000
-    scan_timeout_ms: int = 300000
-    debug: bool = False
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    onetrust_base_url: str = Field(
+        default="https://uat-de.onetrust.com",
+        validation_alias="ONETRUST_BASE_URL",
+    )
+    onetrust_login_url: str = Field(
+        default="https://uat-de.onetrust.com/auth/login",
+        validation_alias="ONETRUST_LOGIN_URL",
+    )
+    onetrust_email: str = Field(
+        default="",
+        validation_alias="ONETRUST_EMAIL",
+    )
+    playwright_headless: bool = Field(
+        default=False,
+        validation_alias="PLAYWRIGHT_HEADLESS",
+    )
+    playwright_user_data_dir: str = Field(
+        default=".playwright/onetrust-profile",
+        validation_alias="PLAYWRIGHT_USER_DATA_DIR",
+    )
+    playwright_timeout_ms: int = Field(
+        default=90000,
+        validation_alias="PLAYWRIGHT_TIMEOUT_MS",
+    )
+    onetrust_scan_timeout_ms: int = Field(
+        default=300000,
+        validation_alias="ONETRUST_SCAN_TIMEOUT_MS",
+    )
+    debug: bool = Field(
+        default=False,
+        validation_alias="ONETRUST_DEBUG",
+    )
 
 
 settings = Settings()

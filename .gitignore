@@ -1,33 +1,46 @@
-.venv/
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
-.env
-*.db
-.pytest_cache/
-dist/
-build/
-*.egg-info/
+*.pyd
 
-# SPL orchestration files — not for version control
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Type/lint/test caches
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Env files
+.env
+
+# Playwright
+.playwright/
+playwright-report/
+test-results/
+
+# Screenshots/debug output
+backend/screenshots/*.png
+backend/screenshots/*.jpg
+backend/screenshots/*.jpeg
+backend/screenshots/*.webp
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/settings.json
+.idea/
+
+# SPL orchestration files - not for version control
 CLAUDE.md
 idea.md
 planning.md
 agents.md
 backend/agents.md
 tests/agents.md
-
-# Playwright profile
-.playwright/
-
-# Virtual environments
-backend/.venv/
-
-# Error screenshots
-backend/screenshots/*.png
-backend/screenshots/*.jpg
-backend/screenshots/*.jpeg
-backend/screenshots/*.webp
-
-.mypy_cache/
-.ruff_cache/

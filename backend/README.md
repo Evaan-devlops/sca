@@ -2,24 +2,10 @@
 
 FastAPI + Playwright backend that automates authorized OneTrust sandbox workflows.
 
-## Setup (Windows)
-
-```powershell
-cd C:\Users\91997\scrapper\backend
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-python -m playwright install chromium
-copy .env.example .env
-code .env
-python -m uvicorn app.main:app --reload
-```
-
 ## Setup (Mac)
 
 ```bash
-cd /Users/sinhas43/scrapper
+cd <project-root>          # e.g. ~/scrapper or wherever you cloned the repo
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
@@ -27,17 +13,46 @@ cd backend
 pip install -r requirements.txt
 python -m playwright install chromium
 cp .env.example .env
-code .env
+code .env                  # fill in ONETRUST_EMAIL
+python check_setup.py
 python -m uvicorn app.main:app --reload
 ```
 
-In VS Code, select this interpreter:
+### VS Code Interpreter (Mac)
+
+Cmd + Shift + P → Python: Select Interpreter → select the `.venv` interpreter inside your project root:
 
 ```text
-/Users/sinhas43/scrapper/.venv/bin/python
+<project-root>/.venv/bin/python
 ```
 
-Edit `backend/.env` and fill in your values:
+## Setup (Windows)
+
+```powershell
+cd C:\Users\91997\scrapper
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+cd backend
+pip install -r requirements.txt
+python -m playwright install chromium
+copy .env.example .env
+code .env
+python check_setup.py
+python -m uvicorn app.main:app --reload
+```
+
+### VS Code Interpreter (Windows)
+
+Ctrl + Shift + P -> Python: Select Interpreter ->
+
+```text
+<repo>\.venv\Scripts\python.exe
+```
+
+## Environment
+
+After copying `.env.example`, edit `backend/.env` and fill in your values:
 
 ```env
 ONETRUST_BASE_URL=https://uat-de.onetrust.com
@@ -72,7 +87,7 @@ A browser window opens. Complete SSO/PingID if prompted. Returns `"status": "log
 POST http://localhost:8000/add_app
 {"url": "https://www.pfizerguidesources.com"}
 ```
-Runs the full 7-step Add Website wizard and returns step-by-step results.
+Runs the full 13-step Add Website wizard through to scan status Completed.
 
 **3. Check mapper**
 ```

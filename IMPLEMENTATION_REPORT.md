@@ -528,3 +528,34 @@ Generated: 2026-06-08
 | `ruff check app/` | Passed |
 | `mypy app/` | Passed |
 | `python -m uvicorn app.main:app --reload` | Direct long-running command timed out; controlled uvicorn startup on `127.0.0.1:8010` passed and was stopped |
+
+---
+
+## 18. M10 - Cross-platform Mac/Windows VS Code Setup
+
+Generated: 2026-06-09
+
+### Changes
+
+- README now has separate Mac and Windows setup flows from the repo root.
+- `.vscode/settings.json` added without a hardcoded interpreter path.
+- No hardcoded Windows runtime paths remain in source files.
+- Runtime Playwright paths use `pathlib.Path`; the user data dir resolves via `Path(settings.playwright_user_data_dir).resolve()`.
+- Screenshots directory is created with `mkdir(parents=True, exist_ok=True)`.
+- Root `.gitignore` updated for Mac/Windows artifacts, Python caches, Playwright output, env files, and debug screenshots.
+- Cache/generated files removed from the working package while keeping `backend/screenshots/.gitkeep`.
+
+### Commands run and results
+
+| Command | Result |
+|---------|--------|
+| `rg -n -F -e "\\Scripts\\" -e "Activate.ps1" -e "C:\\" -e "copy .env.example .env" -e "/Users/" -e "Users\\" .` | Matches expected setup documentation only |
+| `python check_setup.py` | Failed in this Windows workspace: `No module named 'playwright'` in the available system Python |
+| `python -m compileall app` | Passed |
+| `ruff check app/` | Passed |
+| `mypy app/ --ignore-missing-imports` | Passed |
+| `python -m uvicorn app.main:app --host 127.0.0.1 --port 8010` | Failed before startup: `No module named 'playwright'` in the available system Python |
+
+### Remaining issue
+
+The current Windows workspace does not have a project virtual environment or Playwright installed for the available system Python, so `check_setup.py` and uvicorn startup cannot complete here until dependencies are installed.

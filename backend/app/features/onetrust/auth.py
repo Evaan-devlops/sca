@@ -229,10 +229,24 @@ async def login_onetrust() -> dict:
     steps: list[dict] = []
 
     if not email:
+        step_name = "load_email_from_config"
+        steps.append({
+            "step": step_name,
+            "status": "failed",
+            "message": "ONETRUST_EMAIL is missing",
+        })
         return {
-            "status": "error",
-            "message": "ONETRUST_EMAIL is not set in environment",
+            "status": "configuration error",
+            "message": "ONETRUST_EMAIL is missing. Add it to backend/.env.",
             "current_url": page.url,
+            "failed_step": step_name,
+            "steps": steps,
+            "debug": {
+                "possible_reason": (
+                    "backend/.env is missing ONETRUST_EMAIL or .env was not copied from .env.example"
+                ),
+                "next_action": "Create backend/.env and set ONETRUST_EMAIL",
+            },
         }
 
     if await is_logged_in(page):

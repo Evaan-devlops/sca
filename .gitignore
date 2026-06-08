@@ -1,0 +1,33 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+*.db
+.pytest_cache/
+dist/
+build/
+*.egg-info/
+
+# SPL orchestration files — not for version control
+CLAUDE.md
+idea.md
+planning.md
+agents.md
+backend/agents.md
+tests/agents.md
+
+# Playwright profile
+.playwright/
+
+# Virtual environments
+backend/.venv/
+
+# Error screenshots
+backend/screenshots/*.png
+backend/screenshots/*.jpg
+backend/screenshots/*.jpeg
+backend/screenshots/*.webp
+
+.mypy_cache/
+.ruff_cache/

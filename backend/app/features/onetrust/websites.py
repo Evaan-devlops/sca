@@ -2,7 +2,7 @@ import datetime
 import logging
 import re
 
-from playwright.async_api import Page, expect
+from playwright.async_api import Locator, Page, expect
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from app.core.config import settings
@@ -56,8 +56,40 @@ async def _build_debug(
     }
 
 
-async def ensure_websites_page(page: Page) -> None:
-    """Navigate to the Websites page if not already there."""
+async def _find_add_website_button(page: Page) -> Locator | None:
+    candidates: list[Locator] = [
+        page.get_by_role("button", name=re.compile(r"Add website", re.I)),
+        page.get_by_text("Add website", exact=True),
+        page.locator("button:has-text('Add website')"),
+        page.locator("[data-testid*='add-website' i]"),
+        page.locator("[class*='add-website' i]"),
+        page.locator("a:has-text('Add website')"),
+    ]
+    for loc in candidates:
+        try:
+            if await loc.count() > 0:
+                return loc
+        except Exception:  # noqa: BLE001
+            pass
+    return None
+
+
+async def collect_visible_markers(page: Page) -> list[str]:
+    markers = [
+        "Websites", "Add website", "Scan status", "Domain",
+        "Last Updated", "spinner", "loading", "Processing", "Please wait",
+    ]
+    found: list[str] = []
+    for marker in markers:
+        try:
+            if await page.locator(f"text={marker}").count() > 0:
+                found.append(marker)
+        except Exception:  # noqa: BLE001
+            pass
+    return found
+
+
+async def wait_for_websites_page_ready(page: Page) -> None:
     websites_url = f"{settings.onetrust_base_url.rstrip('/')}/cookies/websites"
     if "/cookies/websites" not in page.url:
         logger.info("Navigating to Websites page: %s", websites_url)
@@ -66,24 +98,39 @@ async def ensure_websites_page(page: Page) -> None:
         await page.wait_for_selector("text=Websites", timeout=15000)
     except PlaywrightTimeoutError:
         logger.warning("Websites heading not detected — proceeding anyway")
+    try:
+        await page.wait_for_load_state("networkidle", timeout=5000)
+    except PlaywrightTimeoutError:
+        pass
 
+    poll_interval_ms = 5000
+    max_wait_ms = 60000
+    elapsed = 0
+    while elapsed < max_wait_ms:
+        btn = await _find_add_website_button(page)
+        if btn is not None:
+            return
+        logger.info("Waiting for 'Add website' button... %ds elapsed", elapsed // 1000)
+        await page.wait_for_timeout(poll_interval_ms)
+        elapsed += poll_interval_ms
 
-async def click_add_website_button(page: Page) -> bool:
-    """Attempt to click the Add website button using multiple locator strategies."""
-    locators = [
-        page.get_by_role("button", name=re.compile(r"Add website", re.I)),
-        page.get_by_text("Add website", exact=False),
-        page.locator("button:has-text('Add website')"),
-    ]
-    for loc in locators:
-        try:
-            if await loc.count() > 0:
-                await loc.first.click(timeout=10000)
-                logger.info("Clicked 'Add website' button")
-                return True
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("Locator attempt failed: %s", exc)
-    return False
+    logger.info("'Add website' button not found after 60s — reloading page")
+    await page.reload(wait_until="domcontentloaded")
+    try:
+        await page.wait_for_selector("text=Websites", timeout=15000)
+    except PlaywrightTimeoutError:
+        pass
+
+    retry_ms = 30000
+    elapsed = 0
+    while elapsed < retry_ms:
+        btn = await _find_add_website_button(page)
+        if btn is not None:
+            return
+        await page.wait_for_timeout(poll_interval_ms)
+        elapsed += poll_interval_ms
+
+    raise RuntimeError("Add website button did not appear on Websites page after 90s")
 
 
 async def add_app_flow(url: str) -> dict:
@@ -133,7 +180,7 @@ async def add_app_flow(url: str) -> dict:
     step_name = "open_websites_page"
     logger.info("[%s] started | url=%s", step_name, page.url)
     try:
-        await ensure_websites_page(page)
+        await wait_for_websites_page_ready(page)
         url_lower = page.url.lower()
         if any(ind in url_lower for ind in ("auth/login", "pingidentity", "sso", "pfizeridentity", "processing")):
             logger.warning("[%s] SSO redirect detected: %s", step_name, page.url)
@@ -151,6 +198,13 @@ async def add_app_flow(url: str) -> dict:
         logger.exception("[%s] failed: %s", step_name, exc)
         screenshot = await browser_manager.screenshot_on_error(step_name)
         steps.append({"step": step_name, "status": "failed", "message": str(exc)})
+        markers = await collect_visible_markers(page)
+        debug = await _build_debug(
+            page, step_name, exc=exc, screenshot=screenshot,
+            possible_reason="Websites page loaded but 'Add website' button did not appear — SPA may still be loading",
+            next_action="Check if a spinner or overlay is blocking the button",
+            visible_markers=markers,
+        )
         return {
             "status": "failed",
             "message": f"Step '{step_name}' failed: {exc}",
@@ -159,6 +213,7 @@ async def add_app_flow(url: str) -> dict:
             "current_url": page.url,
             "screenshot": screenshot,
             "steps": steps,
+            "debug": debug,
         }
 
     # ------------------------------------------------------------------ #
@@ -167,9 +222,13 @@ async def add_app_flow(url: str) -> dict:
     step_name = "click_add_website"
     logger.info("[%s] started | url=%s", step_name, page.url)
     try:
-        success = await click_add_website_button(page)
-        if not success:
-            raise RuntimeError("Could not find or click the 'Add website' button")
+        btn = await _find_add_website_button(page)
+        if btn is None:
+            raise RuntimeError("Could not find the 'Add website' button")
+        await expect(btn.first).to_be_visible(timeout=10000)
+        await expect(btn.first).to_be_enabled(timeout=10000)
+        await btn.first.scroll_into_view_if_needed()
+        await btn.first.click(timeout=10000)
 
         # Confirm wizard loaded (URL change OR visible heading)
         wizard_loaded = False

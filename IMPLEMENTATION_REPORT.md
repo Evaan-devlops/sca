@@ -559,3 +559,42 @@ Generated: 2026-06-09
 ### Remaining issue
 
 The current Windows workspace does not have a project virtual environment or Playwright installed for the available system Python, so `check_setup.py` and uvicorn startup cannot complete here until dependencies are installed.
+
+---
+
+## 19. M10 — Websites Page SPA Readiness Fix
+
+Generated: 2026-06-09
+
+### Problem
+
+`/add_app` Step 3 (`click_add_website`) was failing with "Could not find or click the 'Add website' button" because the OneTrust Websites SPA renders the `<h1>Websites</h1>` heading immediately but loads the table and action buttons asynchronously. Step 2 (`open_websites_page`) was completing as soon as `"text=Websites"` matched — before the button was visible.
+
+### Root cause
+
+`ensure_websites_page` waited only for `"text=Websites"` (15s). The "Add website" button appears 5–30s later once the SPA finishes hydrating. `click_add_website_button` then fired against a page still showing a spinner.
+
+### Changes
+
+**`backend/app/features/onetrust/websites.py`**
+
+- Added `Locator` to `playwright.async_api` imports.
+- Removed `ensure_websites_page(page) -> None` and `click_add_website_button(page) -> bool`.
+- Added `_find_add_website_button(page) -> Locator | None` — 6-selector cascade (role, exact text, `:has-text`, data-testid, class, `<a>` fallback).
+- Added `collect_visible_markers(page) -> list[str]` — probes 9 page markers for debug output.
+- Added `wait_for_websites_page_ready(page) -> None`:
+  - Navigate to `/cookies/websites` if not already there.
+  - Wait for heading (`text=Websites`, 15s).
+  - Try `networkidle` non-blocking (5s).
+  - Poll 60s (every 5s) calling `_find_add_website_button`; return on first hit.
+  - One reload, then 30s retry poll.
+  - Raise `RuntimeError` after 90s total.
+- Step 2 (`open_websites_page`): calls `wait_for_websites_page_ready` instead of `ensure_websites_page`; failure response now includes `debug` with `collect_visible_markers` output.
+- Step 3 (`click_add_website`): calls `_find_add_website_button` + `expect().to_be_visible()` + `expect().to_be_enabled()` + `scroll_into_view_if_needed()` before clicking.
+
+### Commands run and results
+
+| Command | Result |
+|---------|--------|
+| `ruff check app\features\onetrust\websites.py` | All checks passed |
+| `mypy app\features\onetrust\websites.py --ignore-missing-imports` | Success: no issues found |

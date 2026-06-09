@@ -10,7 +10,7 @@
 > Post-compact restore block. Read this after `/compact` or at any new session start.
 > Update after every milestone. Keep under 40 lines.
 
-**Last updated:** 2026-06-09 | **Milestones since /compact:** 8
+**Last updated:** 2026-06-09 | **Milestones since /compact:** 9
 
 ```
 APP: onetrust-automation — FastAPI backend automating authorized OneTrust sandbox workflows via Playwright
@@ -24,8 +24,9 @@ FEATURES DONE:
   mapper (GET /mapper/default, POST /mapper/resolve) — BE ✓
   M8 debug responses + email prefill + scan polling — BE ✓
   M9 Mac/cross-platform compatibility — config extra="ignore", venv paths, .vscode/settings.json ✓
+  M10 Websites page SPA readiness — wait_for_websites_page_ready, _find_add_website_button, collect_visible_markers ✓
 
-ACTIVE: COMPLETE — M9 done. Run: source .venv/bin/activate && cd backend && uvicorn app.main:app --reload
+ACTIVE: COMPLETE — M10 done. Run: source .venv/bin/activate && cd backend && uvicorn app.main:app --reload
 
 NEXT: none
 
@@ -133,3 +134,4 @@ GET  /health      ──▶  backend/app/main.py (inline handler)
 - 2026-06-08 — Task 2 complete: POST /auth/login — auth feature fully implemented (is_logged_in, fill_email_and_next, wait_for_sso_completion, handle_post_login_modals, login_onetrust), ruff ✓, mypy ✓
 - 2026-06-08 — Task 3 complete: POST /add_app — websites feature fully implemented (ensure_websites_page, click_add_website_button, click_add_website), ruff ✓, mypy ✓, route registered ✓. v1 complete.
 - 2026-06-08 — M8 complete: debug responses + email prefill + /add_app extended to 13 steps with scan polling; DebugInfo schema added; scan_timeout_ms config added; ruff ✓, mypy ✓, compileall ✓
+- 2026-06-09 — M10 complete: SPA readiness fix — wait_for_websites_page_ready (90s poll + reload retry), _find_add_website_button (6-selector cascade), collect_visible_markers; Step 2/3 updated; ruff ✓, mypy ✓

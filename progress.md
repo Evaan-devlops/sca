@@ -10,7 +10,7 @@
 > Post-compact restore block. Read this after `/compact` or at any new session start.
 > Update after every milestone. Keep under 40 lines.
 
-**Last updated:** 2026-06-10 | **Milestones since /compact:** 10
+**Last updated:** 2026-06-11 | **Milestones since /compact:** 10
 
 ```
 APP: onetrust-automation — FastAPI backend automating authorized OneTrust sandbox workflows via Playwright
@@ -20,14 +20,23 @@ PORTS: BE=http://localhost:8000 | prefix: none (bare paths)
 FEATURES DONE:
   scaffold (GET /health) — BE ✓
   auth (POST /auth/login) — BE ✓
-  websites (POST /add_app) — full 13-step wizard ✓
+  websites (POST /add_app) — 11-step wizard (stops at wait_return_to_websites_page) ✓
   mapper (GET /mapper/default, POST /mapper/resolve) — BE ✓
-  M8 debug responses + email prefill + scan polling — BE ✓
-  M9 Mac/cross-platform compatibility — config extra="ignore", venv paths, .vscode/settings.json ✓
-  M10 Websites page SPA readiness — wait_for_websites_page_ready, _find_add_website_button, collect_visible_markers ✓
-  M11 Split /add_app + new /filter_code — /add_app stops at step 11, POST /filter_code 12-step data-domain-script extraction ✓
+  M8 debug responses + email prefill — BE ✓
+  M9 Mac/cross-platform compatibility — config extra="ignore", venv paths ✓
+  M10 Websites page SPA readiness — wait_for_websites_page_ready ✓
+  M11 Split /add_app + new /filter_code — POST /filter_code 12-step data-domain-script extraction ✓
+  M12 Filter code reliability + streaming APIs:
+    - verify_scan_completed: row-specific scan-status polling (5s interval, ONETRUST_SCAN_TIMEOUT_MS)
+    - wait_website_details_ready: blocks until domain/Completed/Publish/menu all visible
+    - click_top_right_actions_menu: picks topmost three-dot button (min y-coordinate)
+    - get_production_modal_text: collects from textarea/pre/code/otSDKStub parent
+    - wait_production_scripts_modal: polls until data-domain-script present in modal DOM
+    - extract_data_domain_script failure: rich debug (screenshot, modal_text_preview, visible_markers)
+    - POST /add_app/stream: NDJSON step events via asyncio.Queue + background task
+    - POST /filter_code/stream: same pattern ✓
 
-ACTIVE: COMPLETE — M11 done. Run: source .venv/bin/activate && cd backend && uvicorn app.main:app --reload
+ACTIVE: COMPLETE — M12 done. Run: source .venv/bin/activate && cd backend && uvicorn app.main:app --reload
 
 NEXT: none
 
@@ -36,11 +45,11 @@ KEY DECISIONS:
   features/onetrust/ flat module (M4 restructure) |
   tests skipped — per user decision |
   no DB — email from .env only |
-  /add_app full 13-step wizard including scan polling — per M8 spec |
   pydantic-settings validation_alias for all fields + extra="ignore" — per M9 spec |
-  development is LOCAL ONLY — no git automation
+  development is LOCAL ONLY — no git automation |
+  streaming uses asyncio.Queue + background task — decouples Playwright I/O from HTTP streaming
 GAPS: none
-MILESTONES SINCE /compact: 8
+MILESTONES SINCE /compact: 10
 ```
 
 ---
@@ -53,6 +62,8 @@ MILESTONES SINCE /compact: 8
 | POST | `/auth/login` | `{}` | `{status, message, current_url?, handled_modals?, screenshot?, failed_step?, steps[]?, debug?}` | No | Task 2 |
 | POST | `/add_app` | `{url: str}` | `{status, message, input_url?, selected_kit?, current_url?, screenshot?, steps[], next_action?, debug?}` | No | Task 5 |
 | POST | `/filter_code` | `{url: str}` | `{status, message, input_url, normalized_domain?, matched_display_url?, scan_status?, data_domain_script?, script_snippet?, current_url?, screenshot?, steps[], debug?}` | No | Task 11 |
+| POST | `/add_app/stream` | `{url: str}` | NDJSON stream of step events (`application/x-ndjson`) | No | Task 13 |
+| POST | `/filter_code/stream` | `{url: str}` | NDJSON stream of step events (`application/x-ndjson`) | No | Task 13 |
 | GET | `/mapper/default` | — | `{default_experience_kit, mode}` | No | Task 5 |
 | POST | `/mapper/resolve` | `{url: str}` | `{url, experience_kit, mode}` | No | Task 5 |
 

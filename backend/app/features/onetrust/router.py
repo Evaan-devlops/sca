@@ -3,10 +3,13 @@ import logging
 from fastapi import APIRouter
 
 from app.features.onetrust.auth import login_onetrust
+from app.features.onetrust.filter_code import filter_code_flow
 from app.features.onetrust.mapper import DEFAULT_EXPERIENCE_KIT, get_experience_kit_for_url
 from app.features.onetrust.schemas import (
     AddAppRequest,
     AddAppResponse,
+    FilterCodeRequest,
+    FilterCodeResponse,
     LoginResponse,
     MapperDefaultResponse,
     MapperResolveRequest,
@@ -28,6 +31,12 @@ async def auth_login() -> LoginResponse:
 async def add_app(request: AddAppRequest) -> AddAppResponse:
     result = await add_app_flow(url=request.url)
     return AddAppResponse(**result)
+
+
+@router.post("/filter_code", response_model=FilterCodeResponse)
+async def filter_code(request: FilterCodeRequest) -> FilterCodeResponse:
+    result = await filter_code_flow(url=request.url)
+    return FilterCodeResponse(**result)
 
 
 @router.get("/mapper/default", response_model=MapperDefaultResponse)

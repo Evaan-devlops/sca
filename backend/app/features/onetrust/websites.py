@@ -135,7 +135,7 @@ async def wait_for_websites_page_ready(page: Page) -> None:
 
 async def add_app_flow(url: str) -> dict:
     """
-    Orchestrate the full Add Website wizard flow (13 steps).
+    Orchestrate the Add Website wizard flow (11 steps).
 
     Steps:
       1. confirm_login
@@ -149,8 +149,6 @@ async def add_app_flow(url: str) -> dict:
       9. click_accept_all_preview
       10. click_confirm
       11. wait_return_to_websites_page
-      12. find_website_row
-      13. wait_scan_status_completed
     """
     steps: list[dict] = []
     page = await browser_manager.get_page()
@@ -591,171 +589,22 @@ async def add_app_flow(url: str) -> dict:
         }
 
     # ------------------------------------------------------------------ #
-    # Step 12 — find_website_row
-    # ------------------------------------------------------------------ #
-    matched_display_url: str | None = None
-    step_name = "find_website_row"
-    logger.info("[%s] started | url=%s | input_url=%s", step_name, page.url, url)
-    try:
-        # Search using normalized domain
-        search_term = _normalize_url_for_search(url)
-        variants = _domain_variants(url)
-
-        # Use search box on Websites page
-        search_box = page.get_by_role("searchbox")
-        if await search_box.count() == 0:
-            search_box = page.locator("input[type='search']")
-        if await search_box.count() > 0:
-            await search_box.first.fill(search_term)
-            await page.wait_for_timeout(1500)  # wait for table refresh
-
-        # Find matching row — try each variant
-        for variant in variants:
-            row_loc = page.locator(f"text={variant}")
-            if await row_loc.count() > 0:
-                raw_text = await row_loc.first.inner_text()
-                matched_display_url = raw_text.strip()
-                break
-
-        if matched_display_url is None:
-            raise RuntimeError(f"Website row not found for URL variants: {variants}")
-
-        logger.info("[%s] completed | matched=%s | url=%s", step_name, matched_display_url, page.url)
-        steps.append({"step": step_name, "status": "completed", "matched_display_url": matched_display_url})
-    except Exception as exc:
-        logger.exception("[%s] failed: %s", step_name, exc)
-        screenshot = await browser_manager.screenshot_on_error(step_name)
-        steps.append({"step": step_name, "status": "failed", "message": str(exc)})
-        debug = await _build_debug(
-            page, step_name, exc=exc, screenshot=screenshot,
-            possible_reason="Website row not found in table — may still be processing or URL normalization mismatch",
-            next_action="Check the Websites table manually and verify the URL was added",
-        )
-        return {
-            "status": "failed",
-            "message": f"Step '{step_name}' failed: {exc}",
-            "input_url": url,
-            "selected_kit": kit_name,
-            "current_url": page.url,
-            "screenshot": screenshot,
-            "steps": steps,
-            "debug": debug,
-        }
-
-    # ------------------------------------------------------------------ #
-    # Step 13 — wait_scan_status_completed
-    # ------------------------------------------------------------------ #
-    step_name = "wait_scan_status_completed"
-    logger.info("[%s] started | url=%s", step_name, page.url)
-    try:
-        timeout_ms = settings.onetrust_scan_timeout_ms
-        poll_interval_ms = 5000
-        elapsed = 0
-        scan_status: str | None = None
-        variants = _domain_variants(url)
-
-        while elapsed < timeout_ms:
-            # Re-find the row text
-            row_text = ""
-            for variant in variants:
-                row_loc = page.locator(f"text={variant}")
-                if await row_loc.count() > 0:
-                    # Get the parent row text for scan status
-                    try:
-                        row_el = row_loc.first.locator("xpath=ancestor::tr")
-                        if await row_el.count() > 0:
-                            row_text = await row_el.first.inner_text()
-                        else:
-                            row_text = await row_loc.first.inner_text()
-                    except Exception:  # noqa: BLE001
-                        row_text = await row_loc.first.inner_text()
-                    break
-
-            if "Completed" in row_text:
-                scan_status = "Completed"
-                break
-            if any(bad in row_text for bad in ("Failed", "Error")):
-                scan_status = "Failed"
-                break
-
-            # Still pending — wait and try to refresh
-            await page.wait_for_timeout(poll_interval_ms)
-            try:
-                refresh_btn = page.get_by_role("button", name=re.compile(r"refresh", re.I))
-                if await refresh_btn.count() > 0:
-                    await refresh_btn.first.click(timeout=5000)
-                    await page.wait_for_timeout(1000)
-            except Exception:  # noqa: BLE001
-                pass
-            elapsed += poll_interval_ms
-
-        if scan_status == "Failed":
-            screenshot = await browser_manager.screenshot_on_error(step_name)
-            steps.append({"step": step_name, "status": "failed", "message": "Scan status is Failed"})
-            debug = await _build_debug(
-                page, step_name, screenshot=screenshot,
-                possible_reason="OneTrust scan returned Failed status",
-                next_action="Check scan logs in the OneTrust Websites page",
-            )
-            return {
-                "status": "scan failed",
-                "message": "Scan status is 'Failed' for the added website.",
-                "input_url": url,
-                "selected_kit": kit_name,
-                "scan_status": "Failed",
-                "matched_display_url": matched_display_url,
-                "current_url": page.url,
-                "screenshot": screenshot,
-                "steps": steps,
-                "debug": debug,
-            }
-
-        if scan_status is None:
-            raise RuntimeError(f"Scan status did not reach Completed within {timeout_ms // 1000}s timeout")
-
-        logger.info("[%s] completed — scan_status=Completed | url=%s", step_name, page.url)
-        steps.append({"step": step_name, "status": "completed", "scan_status": "Completed"})
-    except Exception as exc:
-        logger.exception("[%s] failed: %s", step_name, exc)
-        screenshot = await browser_manager.screenshot_on_error(step_name)
-        steps.append({"step": step_name, "status": "failed", "message": str(exc)})
-        debug = await _build_debug(
-            page, step_name, exc=exc, screenshot=screenshot,
-            possible_reason="Scan timed out or row could not be found during polling",
-            next_action=(
-                f"Increase ONETRUST_SCAN_TIMEOUT_MS (currently {settings.onetrust_scan_timeout_ms}ms) "
-                "or check scan status manually"
-            ),
-        )
-        return {
-            "status": "failed",
-            "message": f"Step '{step_name}' failed: {exc}",
-            "input_url": url,
-            "selected_kit": kit_name,
-            "current_url": page.url,
-            "screenshot": screenshot,
-            "steps": steps,
-            "debug": debug,
-        }
-
-    # ------------------------------------------------------------------ #
-    # Final return — all 13 steps completed
+    # Final return — 11 steps completed
     # ------------------------------------------------------------------ #
     debug_info = await _build_debug(
-        page, "wait_scan_status_completed",
+        page, "wait_return_to_websites_page",
         possible_reason=None,
-        next_action="Ready for next automation phase",
-        visible_markers=["Websites", "Scan status", "Completed"],
+        next_action="Call /filter_code to extract the data-domain-script for this website",
+        visible_markers=["Websites"],
     )
     return {
-        "status": "website url scan_status completed",
-        "message": "Website was added, configuration confirmed, and scan status is Completed.",
+        "status": "website configuration confirmed",
+        "message": "Website was added and configuration confirmed. Call /filter_code to fetch the data-domain-script.",
         "input_url": url,
         "selected_kit": kit_name,
-        "scan_status": "Completed",
-        "matched_display_url": matched_display_url,
         "current_url": page.url,
         "screenshot": None,
         "steps": steps,
+        "next_action": {"api": "/filter_code", "request_body": {"url": url}},
         "debug": debug_info,
     }

@@ -56,8 +56,7 @@ class AddAppResponse(BaseModel):
     current_url: str | None = None
     screenshot: str | None = None
     steps: list[StepResult] = Field(default_factory=list)
-    scan_status: str | None = None
-    matched_display_url: str | None = None
+    next_action: dict | None = None
     debug: DebugInfo | None = None
 
 
@@ -81,6 +80,32 @@ class MapperResolveResponse(BaseModel):
     url: str
     experience_kit: str
     mode: str
+
+
+class FilterCodeRequest(BaseModel):
+    url: str
+
+    @field_validator("url")
+    @classmethod
+    def url_must_be_http(cls, v: str) -> str:
+        if not v.startswith(("http://", "https://")):
+            raise ValueError("url must start with http:// or https://")
+        return v
+
+
+class FilterCodeResponse(BaseModel):
+    status: str
+    message: str
+    input_url: str
+    normalized_domain: str | None = None
+    matched_display_url: str | None = None
+    scan_status: str | None = None
+    data_domain_script: str | None = None
+    script_snippet: str | None = None
+    current_url: str | None = None
+    screenshot: str | None = None
+    steps: list[StepResult] = Field(default_factory=list)
+    debug: DebugInfo | None = None
 
 
 LoginResponse.model_rebuild()

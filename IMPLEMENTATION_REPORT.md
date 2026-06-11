@@ -598,3 +598,73 @@ Generated: 2026-06-09
 |---------|--------|
 | `ruff check app\features\onetrust\websites.py` | All checks passed |
 | `mypy app\features\onetrust\websites.py --ignore-missing-imports` | Success: no issues found |
+
+---
+
+## 20. M12 — Split Add App and Filter Code Extraction
+
+Generated: 2026-06-10
+
+### Reason for split
+
+`/add_app` was failing at `find_website_row` because OneTrust returns to the Websites list immediately after Confirm but the table rows load asynchronously. Splitting the flow into two independent APIs eliminates the race condition and gives the caller control over when to fetch the script.
+
+### `/add_app` changes (11 steps)
+
+- Removed Steps 12 (`find_website_row`) and 13 (`wait_scan_status_completed`).
+- New success status: `"website configuration confirmed"`.
+- New `next_action` field in response guides caller to `/filter_code`.
+- `AddAppResponse` no longer contains `scan_status` or `matched_display_url`; gains `next_action: dict | None`.
+
+### New `/filter_code` API (12 steps)
+
+| Step | Name | Action |
+|------|------|--------|
+| 1 | `confirm_login` | Check session |
+| 2 | `open_websites_page` | Navigate to `/cookies/websites` |
+| 3 | `wait_websites_table_loaded` | Poll for table controls (not just heading) |
+| 4 | `filter_website` | Search by root domain keyword |
+| 5 | `find_website_row` | Find row; poll up to `ONETRUST_WEBSITE_TABLE_TIMEOUT_MS` |
+| 6 | `verify_scan_completed` | Poll row for "Completed" status |
+| 7 | `open_website_details` | Click URL link in row |
+| 8 | `wait_website_details_page` | Wait for details page + Publish button |
+| 9 | `open_actions_menu` | Click three-dot button near Publish |
+| 10 | `click_copy_production_scripts` | Click menu item |
+| 11 | `wait_production_scripts_modal` | Wait for modal with `data-domain-script` |
+| 12 | `extract_data_domain_script` | Regex-extract value |
+
+### URL normalization
+
+- `http://www.hitestom.com` → variants: `www.hitestom.com`, `hitestom.com`, `http://www.hitestom.com`, `https://www.hitestom.com`
+- Search keyword: root domain only (e.g. `hitestom`)
+
+### Table loading wait
+
+`wait_websites_table_loaded` checks for: "Website URL", "Scan status", search input, "Add website" button, `[role='row']`, "No records found". Polls every 3s up to `ONETRUST_WEBSITE_TABLE_TIMEOUT_MS`.
+
+### Three-dot menu selection
+
+Selects the button near Publish/Publish test. If multiple `More` buttons exist, uses `bounding_box()` Y-coordinate comparison to pick the topmost one.
+
+### New env var
+
+`ONETRUST_WEBSITE_TABLE_TIMEOUT_MS=120000` — max ms for table load + row search + scan polling.
+
+### New files
+
+- `backend/app/features/onetrust/filter_code.py` — `filter_code_flow`, `wait_websites_table_loaded`, helpers
+
+### Files changed
+
+- `backend/app/features/onetrust/websites.py` — removed steps 12-13; new success response
+- `backend/app/features/onetrust/schemas.py` — `AddAppResponse` updated; `FilterCodeRequest` + `FilterCodeResponse` added
+- `backend/app/features/onetrust/router.py` — `POST /filter_code` registered
+- `backend/app/core/config.py` — `onetrust_website_table_timeout_ms` field added
+- `backend/.env.example` — `ONETRUST_WEBSITE_TABLE_TIMEOUT_MS=120000` added
+
+### Commands run and results
+
+| Command | Result |
+|---------|--------|
+| `ruff check app\` | All checks passed |
+| `mypy app\ --ignore-missing-imports` | Success: no issues found in 14 source files |

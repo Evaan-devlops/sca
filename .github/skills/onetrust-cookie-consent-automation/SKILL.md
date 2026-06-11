@@ -45,8 +45,10 @@ Required endpoints:
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/health` | Confirm backend is alive |
-| POST | `/auth/login` | SSO login via persistent browser session |
-| GET | `/auth/status` | Check current session state (use to confirm login after IAM completion) |
+| POST | `/auth/start` | Non-blocking login start: navigate → fill email → classify → return |
+| POST | `/auth/reset` | Navigate browser to login URL (keeps cookies); use for stale sessions |
+| POST | `/auth/login` | Legacy blocking login (waits up to 10 min) — fallback only |
+| GET | `/auth/status` | Check session state (6 states; includes `page_title`, `visible_markers`, `next_action`) |
 | POST | `/add_app` | Add website + confirm experience kit (11 steps) |
 | POST | `/filter_code` | Find website row, verify scan, extract data-domain-script (12 steps) |
 
@@ -91,8 +93,10 @@ If the backend is not running or returns an error, stop and tell the user:
 
 ### Step 2 — Login
 
+**Preferred (non-blocking):**
+
 ```
-POST http://127.0.0.1:8000/auth/login
+POST http://127.0.0.1:8000/auth/start
 Body: {}
 ```
 
@@ -102,13 +106,23 @@ Handle response `status`:
 |--------|--------|
 | `"logged in"` | Continue to Step 3 |
 | `"manual login required"` | Tell user (see below). Poll `GET /auth/status` until `"logged in"`, then continue to Step 3. |
-| `"SSO issue"` | Treat same as `"manual login required"` — tell user, poll `GET /auth/status`. |
+| `"SSO pending"` | Tell user to complete SSO in browser. Poll `GET /auth/status` until `"logged in"`. |
 | `"configuration error"` | Stop. Show `message` and `debug.next_action` from response. |
+| `"unknown auth state"` | Stop. Tell user to restart the backend. |
 | `"error"` / any other | Stop. Show `failed_step`, `message`, `debug.next_action`, `screenshot` path. |
 
-> **HARD RULE:** Copilot must **NEVER** call `/add_app` or `/filter_code` unless `/auth/login` or `/auth/status` returns status exactly `"logged in"`. Any other status means login is not complete. Calling `/add_app` or `/filter_code` before login is confirmed will return `{"status": "login required"}` and fail immediately.
+**When session is stale (browser stuck on unrecognised page):**
 
-**When status is `"manual login required"` or `"SSO issue"`**, tell the user:
+```
+POST http://127.0.0.1:8000/auth/reset
+Body: {}
+```
+
+Then call `POST /auth/start` again.
+
+> **HARD RULE:** Copilot must **NEVER** call `/add_app` or `/filter_code` unless `GET /auth/status` returns status exactly `"logged in"`. Any other status means login is not complete. Calling `/add_app` or `/filter_code` before login is confirmed will return `{"status": "login required"}` and fail immediately.
+
+**When status is `"manual login required"`**, tell the user:
 
 > "Login is not complete yet. Please finish SSO/PingID/Digital On Demand login in the opened browser. After the browser reaches the OneTrust Sandbox Environment, ask me to continue."
 
@@ -174,7 +188,7 @@ Production script snippet:
 <script_snippet>
 
 Completed steps:
-- /auth/login — completed
+- /auth/start — logged in
 - /add_app — website configuration confirmed
 - /filter_code — data_domain_script extracted
 ```
@@ -222,6 +236,7 @@ Then ask the user: "Do you want to share the screenshot or the full JSON respons
 When using this skill, Copilot must:
 
 - Call the existing backend APIs — do **not** rewrite or reproduce Playwright automation logic
-- Use the three tools in order: `/auth/login` → `/add_app` → `/filter_code`
+- Use tools in order: `POST /auth/start` → confirm `"logged in"` via `GET /auth/status` → `POST /add_app` → `POST /filter_code`
+- Use `POST /auth/reset` when the browser session is stale before retrying `POST /auth/start`
 - Only modify backend Python code if the user explicitly asks to fix an implementation bug
 - Treat the backend as a black box; the skill's job is orchestration and response presentation only

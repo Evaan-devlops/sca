@@ -77,12 +77,28 @@ API available at `http://localhost:8000`
 
 ## Usage
 
-**1. Login (required first)**
+**1. Start auth (non-blocking)**
+```
+POST http://localhost:8000/auth/start
+{}
+```
+Navigates to login URL, fills email, waits 3 s, returns state immediately. Returns `"status": "logged in"`, `"manual login required"`, or `"SSO pending"`.
+
+If IAM login is detected — enter credentials in the opened browser, then call `GET /auth/status`.
+
+**1a. Reset stale session**
+```
+POST http://localhost:8000/auth/reset
+{}
+```
+Navigates browser back to login URL (keeps cookies/profile). Use when the browser is stuck on an expired page.
+
+**1b. Legacy blocking login**
 ```
 POST http://localhost:8000/auth/login
 {}
 ```
-A browser window opens. Complete SSO/PingID if prompted. Returns `"status": "logged in"` on success.
+Blocks up to `ONETRUST_MANUAL_LOGIN_TIMEOUT_MS` (default: 10 min). Use if you prefer a single blocking call.
 
 **2. Add website**
 ```
@@ -101,8 +117,10 @@ GET http://localhost:8000/mapper/default
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/health` | Browser ready status |
-| POST | `/auth/login` | Login to OneTrust via SSO |
-| GET | `/auth/status` | Check current session state (logged in / IAM / SSO / not logged in) |
+| POST | `/auth/start` | Non-blocking: navigate → fill email → classify → return immediately |
+| POST | `/auth/reset` | Navigate browser to login URL (keeps cookies); return current state |
+| POST | `/auth/login` | Blocking login — waits up to `ONETRUST_MANUAL_LOGIN_TIMEOUT_MS` |
+| GET | `/auth/status` | Check session state — 6 states: `logged in`, `manual login required`, `SSO pending`, `expired SSO page`, `not logged in`, `unknown auth state` |
 | POST | `/auth/login/stream` | Same as `/auth/login`, NDJSON step stream |
 | POST | `/add_app` | Run Add Website wizard (11 steps) |
 | POST | `/add_app/stream` | Same as above, NDJSON step stream |

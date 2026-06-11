@@ -2,6 +2,7 @@ import asyncio
 import datetime
 import re
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 from playwright.async_api import Page
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
@@ -12,6 +13,41 @@ from app.core.config import settings
 from app.features.onetrust.browser import browser_manager
 
 logger = logging.getLogger(__name__)
+
+AUTH_TEXT_MARKERS = [
+    "Digital On Demand", "IAM: Sign In", "ACCEPT & CONNECT",
+    "PingID", "Sign On", "Single Sign-On", "Processing",
+    "Sandbox Environment", "Cookie Consent", "Websites",
+]
+AUTH_FORM_SELECTORS = [
+    "input[name='username']",
+    "input[id*='username' i]",
+    "input[type='password']",
+    "button:has-text('ACCEPT & CONNECT')",
+]
+
+
+async def collect_auth_visible_markers(page: Page) -> list[str]:
+    """Iterate over the main frame and all iframes, collecting visible auth markers."""
+    found: list[str] = []
+    all_frames: list[Any] = [page] + list(page.frames)
+    for frame in all_frames:
+        for marker in AUTH_TEXT_MARKERS:
+            try:
+                if await frame.get_by_text(marker, exact=False).first.is_visible(timeout=500):
+                    if marker not in found:
+                        found.append(marker)
+            except Exception:  # noqa: BLE001
+                pass
+        for sel in AUTH_FORM_SELECTORS:
+            try:
+                if await frame.locator(sel).first.is_visible(timeout=500):
+                    label = f"form:{sel}"
+                    if label not in found:
+                        found.append(label)
+            except Exception:  # noqa: BLE001
+                pass
+    return found
 
 
 class _IamLoginTimeoutError(RuntimeError):
@@ -103,17 +139,10 @@ _ONETRUST_AUTH_TEXT_MARKERS = ("Sandbox Environment", "Cookie Consent", "Website
 
 
 async def detect_digital_on_demand_login(page: Page) -> bool:
-    """Return True if the Digital On Demand IAM login page is currently visible."""
-    iam_markers = [
-        "DIGITAL ON DEMAND",
-        "IAM: Sign In",
-        "ACCEPT & CONNECT",
-    ]
-    try:
-        body_text = await page.inner_text("body")
-        return any(marker in body_text for marker in iam_markers)
-    except Exception:  # noqa: BLE001
-        return False
+    """Return True if the Digital On Demand IAM login page is currently visible (frame-aware)."""
+    markers = await collect_auth_visible_markers(page)
+    iam_markers = {"Digital On Demand", "IAM: Sign In", "ACCEPT & CONNECT"}
+    return any(m in markers for m in iam_markers) or any("form:" in m for m in markers)
 
 
 async def is_sso_or_manual_page(page: Page) -> bool:
@@ -125,15 +154,9 @@ async def is_sso_or_manual_page(page: Page) -> bool:
     )
     if any(m in url_lower for m in sso_url_markers):
         return True
-    try:
-        body = await page.inner_text("body")
-        sso_body_markers = (
-            "Digital On Demand", "IAM: Sign In", "ACCEPT & CONNECT",
-            "PingID", "Sign On",
-        )
-        return any(m in body for m in sso_body_markers)
-    except Exception:  # noqa: BLE001
-        return False
+    markers = await collect_auth_visible_markers(page)
+    sso_text_markers = {"Digital On Demand", "IAM: Sign In", "ACCEPT & CONNECT", "PingID", "Sign On"}
+    return bool(markers) and any(m in markers for m in sso_text_markers)
 
 
 async def handle_digital_on_demand_manual_login(
@@ -270,22 +293,9 @@ async def wait_for_auth_completion(
             ),
         })
 
-    # One-time username prefill on first poll if on SSO/IAM page
-    if settings.onetrust_iam_username and await is_sso_or_manual_page(page):
-        try:
-            input_loc = page.get_by_label(re.compile(r"username", re.I))
-            if await input_loc.count() == 0:
-                input_loc = page.locator("input[name*='user' i]")
-            if await input_loc.count() > 0:
-                val = await input_loc.first.input_value()
-                if not val:
-                    await input_loc.first.fill(settings.onetrust_iam_username)
-                    steps.append({"step": "prefill_iam_username", "status": "completed"})
-                    logger.info("Prefilled IAM username field")
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Could not prefill IAM username: %s", exc)
-
     while elapsed_ms < timeout_ms:
+        await page.bring_to_front()
+
         url_lower = page.url.lower()
 
         # Check success
@@ -300,6 +310,43 @@ async def wait_for_auth_completion(
             if emit:
                 await emit({"event": "step_completed", "step": "wait_for_sso_completion"})
             return  # success
+
+        # Fast IAM return — do not wait for full timeout
+        if await detect_digital_on_demand_login(page):
+            # Optionally prefill IAM username
+            if settings.onetrust_iam_username:
+                for f in ([page] + list(page.frames)):
+                    try:
+                        uname = f.locator("input[name='username'], input[id*='username' i]").first
+                        if await uname.is_visible(timeout=500):
+                            await uname.fill(settings.onetrust_iam_username)
+                            steps.append({"step": "prefill_iam_username", "status": "completed", "message": "IAM username prefilled"})
+                            break
+                    except Exception:  # noqa: BLE001
+                        pass
+            screenshot = await browser_manager.screenshot_on_error("wait_for_auth_iam_detected")
+            visible_markers = await collect_auth_visible_markers(page)
+            steps.append({
+                "step": "wait_for_sso_completion",
+                "status": "failed",
+                "message": "Digital On Demand IAM login detected — manual login required",
+            })
+            if emit:
+                await emit({
+                    "event": "step_failed",
+                    "step": "wait_for_sso_completion",
+                    "message": "Digital On Demand IAM login detected. Enter credentials manually.",
+                })
+            raise _IamLoginTimeoutError(
+                "Digital On Demand IAM manual login detected. "
+                "Enter your username and password in the opened browser, then call /auth/status.",
+                screenshot=screenshot,
+                failed_step="wait_for_sso_completion",
+                next_action=(
+                    "Enter credentials manually in the browser window, then call GET /auth/status"
+                ),
+                visible_markers=visible_markers,
+            )
 
         # Log every 15s
         if poll_count % log_every_n == 0:
@@ -649,4 +696,124 @@ async def login_onetrust(
         "current_url": page.url,
         "handled_modals": handled_modals,
         "steps": steps,
+    }
+
+
+async def start_auth_flow() -> dict:
+    """
+    Non-blocking auth start: navigate to login URL, fill email+Next,
+    wait 3s, classify state, and return immediately without blocking for SSO.
+    """
+    try:
+        page = await browser_manager.get_page()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("start_auth_flow: browser not ready: %s", exc)
+        return {
+            "status": "unknown auth state",
+            "message": "Browser not started. Start the backend and try again.",
+            "next_action": "Restart the backend service",
+            "steps": [],
+        }
+
+    await page.bring_to_front()
+    steps: list[dict] = []
+
+    if await is_logged_in(page):
+        return {"status": "logged in", "message": "Already logged in.", "steps": steps}
+
+    email = settings.onetrust_email
+    if not email:
+        return {
+            "status": "configuration error",
+            "message": "ONETRUST_EMAIL is not set in backend/.env.",
+            "failed_step": "load_email_from_config",
+            "steps": [{"step": "load_email_from_config", "status": "failed", "message": "ONETRUST_EMAIL is missing"}],
+            "debug": {
+                "possible_reason": "backend/.env missing ONETRUST_EMAIL",
+                "next_action": "Add ONETRUST_EMAIL to backend/.env",
+            },
+        }
+
+    await page.goto(settings.onetrust_login_url, wait_until="domcontentloaded")
+    await fill_email_or_confirm_prefilled_email(page, email)
+    steps.append({"step": "fill_email_and_next", "status": "completed"})
+
+    await page.wait_for_timeout(3000)
+
+    if await is_logged_in(page):
+        return {"status": "logged in", "message": "Login completed immediately.", "current_url": page.url, "steps": steps}
+
+    if await detect_digital_on_demand_login(page):
+        markers = await collect_auth_visible_markers(page)
+        if settings.onetrust_iam_username:
+            for f in ([page] + list(page.frames)):
+                try:
+                    uname = f.locator("input[name='username'], input[id*='username' i]").first
+                    if await uname.is_visible(timeout=500):
+                        await uname.fill(settings.onetrust_iam_username)
+                        steps.append({"step": "prefill_iam_username", "status": "completed"})
+                        break
+                except Exception:  # noqa: BLE001
+                    pass
+        return {
+            "status": "manual login required",
+            "message": (
+                "Digital On Demand IAM login detected. "
+                "Enter your username and password in the opened browser, then call GET /auth/status."
+            ),
+            "current_url": page.url,
+            "visible_markers": markers,
+            "next_action": "Enter credentials manually in the browser window, then call GET /auth/status",
+            "steps": steps,
+        }
+
+    markers = await collect_auth_visible_markers(page)
+    return {
+        "status": "SSO pending",
+        "message": "Login initiated. Complete SSO in the opened browser, then call GET /auth/status.",
+        "current_url": page.url,
+        "visible_markers": markers,
+        "next_action": "Complete SSO in the opened browser, then call GET /auth/status",
+        "steps": steps,
+    }
+
+
+async def reset_login_page() -> dict:
+    """Navigate the browser to the OneTrust login URL and return current auth state."""
+    try:
+        page = await browser_manager.get_page()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("reset_login_page: browser not ready: %s", exc)
+        return {
+            "status": "unknown auth state",
+            "message": "Browser not started. Start the backend and try again.",
+            "next_action": "Restart the backend service",
+        }
+
+    await page.bring_to_front()
+    await page.goto(settings.onetrust_login_url, wait_until="domcontentloaded")
+    await page.wait_for_timeout(2000)
+    markers = await collect_auth_visible_markers(page)
+    title = await page.title()
+
+    if await is_logged_in(page):
+        status = "logged in"
+        message = "Browser reset to login URL — already logged in."
+    elif await detect_digital_on_demand_login(page):
+        status = "manual login required"
+        message = "Browser reset to login URL — IAM login detected."
+    elif await is_sso_or_manual_page(page):
+        status = "SSO pending"
+        message = "Browser reset to login URL — SSO page detected."
+    else:
+        status = "reset complete"
+        message = "Browser navigated to login URL. Call POST /auth/start to begin login."
+
+    return {
+        "status": status,
+        "message": message,
+        "current_url": page.url,
+        "page_title": title,
+        "visible_markers": markers,
+        "next_action": "Call POST /auth/start to begin login, or GET /auth/status to check state",
     }

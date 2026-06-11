@@ -6,13 +6,23 @@ from collections.abc import AsyncGenerator, Awaitable, Callable
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
-from app.features.onetrust.auth import is_logged_in, is_sso_or_manual_page, login_onetrust
+from app.features.onetrust.auth import (
+    collect_auth_visible_markers,
+    detect_digital_on_demand_login,
+    is_logged_in,
+    is_sso_or_manual_page,
+    login_onetrust,
+    reset_login_page,
+    start_auth_flow,
+)
 from app.features.onetrust.filter_code import filter_code_flow
 from app.features.onetrust.mapper import DEFAULT_EXPERIENCE_KIT, get_experience_kit_for_url
 from app.features.onetrust.browser import browser_manager
 from app.features.onetrust.schemas import (
     AddAppRequest,
     AddAppResponse,
+    AuthResetResponse,
+    AuthStartResponse,
     AuthStatusResponse,
     FilterCodeRequest,
     FilterCodeResponse,
@@ -73,31 +83,99 @@ async def auth_login() -> LoginResponse:
 
 @router.get("/auth/status", response_model=AuthStatusResponse)
 async def auth_status() -> AuthStatusResponse:
-    """Check whether the current browser session is logged into OneTrust."""
-    page = await browser_manager.get_page()
+    """Check whether the current browser session is logged into OneTrust (6 states)."""
+    try:
+        page = await browser_manager.get_page()
+    except Exception:  # noqa: BLE001
+        return AuthStatusResponse(
+            status="unknown auth state",
+            message="Browser not started. Start the backend and try again.",
+            next_action="Restart the backend service",
+        )
+
+    page_title = await page.title()
+    visible_markers = await collect_auth_visible_markers(page)
 
     if await is_logged_in(page):
         return AuthStatusResponse(
             status="logged in",
             message="OneTrust session is authenticated.",
             current_url=page.url,
+            page_title=page_title,
+            visible_markers=visible_markers,
+            next_action="Session is active — proceed with API calls",
+        )
+
+    if await detect_digital_on_demand_login(page):
+        return AuthStatusResponse(
+            status="manual login required",
+            message=(
+                "Digital On Demand IAM login page is open. "
+                "Enter your credentials in the browser, then call /auth/status again."
+            ),
+            current_url=page.url,
+            page_title=page_title,
+            visible_markers=visible_markers,
+            next_action="Enter credentials manually in the browser window, then call GET /auth/status",
         )
 
     if await is_sso_or_manual_page(page):
         return AuthStatusResponse(
-            status="manual login required",
+            status="SSO pending",
             message=(
-                "SSO/PingID/manual login page is open. "
-                "Complete login manually, then call /auth/status again."
+                "SSO/PingID page is open. "
+                "Complete SSO in the opened browser, then call /auth/status again."
             ),
             current_url=page.url,
+            page_title=page_title,
+            visible_markers=visible_markers,
+            next_action="Complete SSO in the opened browser, then call GET /auth/status",
+        )
+
+    url_lower = page.url.lower()
+    if "app.onetrust.com" in url_lower and "auth/login" not in url_lower and not visible_markers:
+        # OneTrust URL but no recognisable content — likely an expired SSO session page
+        return AuthStatusResponse(
+            status="expired SSO page",
+            message="An OneTrust page is open but no active session was detected — the SSO session may have expired.",
+            current_url=page.url,
+            page_title=page_title,
+            visible_markers=visible_markers,
+            next_action="Call POST /auth/reset then POST /auth/start to restart login",
+        )
+
+    if visible_markers:
+        return AuthStatusResponse(
+            status="not logged in",
+            message="Not logged in. Call POST /auth/start to begin login.",
+            current_url=page.url,
+            page_title=page_title,
+            visible_markers=visible_markers,
+            next_action="Call POST /auth/start",
         )
 
     return AuthStatusResponse(
         status="not logged in",
-        message="Call /auth/login.",
+        message="Not logged in. Call POST /auth/start to begin login.",
         current_url=page.url,
+        page_title=page_title,
+        visible_markers=visible_markers,
+        next_action="Call POST /auth/start",
     )
+
+
+@router.post("/auth/start", response_model=AuthStartResponse)
+async def auth_start() -> AuthStartResponse:
+    """Non-blocking auth start: navigate to login, fill email, classify state, return immediately."""
+    result = await start_auth_flow()
+    return AuthStartResponse(**result)
+
+
+@router.post("/auth/reset", response_model=AuthResetResponse)
+async def auth_reset() -> AuthResetResponse:
+    """Navigate browser to login URL (keeping cookies/profile) and return current state."""
+    result = await reset_login_page()
+    return AuthResetResponse(**result)
 
 
 @router.post("/auth/login/stream")

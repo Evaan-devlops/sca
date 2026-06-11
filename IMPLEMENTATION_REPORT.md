@@ -1063,3 +1063,55 @@ Added "Login dependency rule" section describing required sequence and what `/ad
 | `python -m compileall app` | OK — no syntax errors |
 | `python -m ruff check app/` | All checks passed |
 | `python -m mypy app/ --ignore-missing-imports` | Success: no issues found in 14 source files |
+
+---
+
+## §26 M16 — Frame-aware auth detection, fast IAM return, POST /auth/start, POST /auth/reset, 6-state /auth/status
+
+### Problem
+
+`detect_digital_on_demand_login` and `is_sso_or_manual_page` called `page.inner_text("body")` on the main frame only. When the Pfizer IAM form lives inside an iframe the main body is empty, so `visible_markers=[]` in logs and detection failed. `/auth/login` then blocked for the full 10-minute `ONETRUST_MANUAL_LOGIN_TIMEOUT_MS` before returning.
+
+### Changes
+
+#### A — Frame-aware `collect_auth_visible_markers`
+
+New function iterates `[page] + list(page.frames)`. For each frame it checks `AUTH_TEXT_MARKERS` via `get_by_text(...).first.is_visible(timeout=500)` and `AUTH_FORM_SELECTORS` via `locator(...).first.is_visible(timeout=500)`. Both `Page` and `Frame` objects expose these methods.
+
+#### B — Rebuilt `detect_digital_on_demand_login` and `is_sso_or_manual_page`
+
+Both functions now delegate to `collect_auth_visible_markers` instead of reading `page.inner_text("body")`.
+
+#### C — Fast IAM return in `wait_for_auth_completion`
+
+Each poll iteration now calls `page.bring_to_front()` first. When `detect_digital_on_demand_login` returns True, username prefill runs (if configured), then `_IamLoginTimeoutError` is raised immediately with `"manual login required"` — no longer waits for full timeout.
+
+#### D — New `POST /auth/start`
+
+Non-blocking endpoint: navigate → fill email + Next → wait 3 s → classify → return. Never blocks for SSO.
+
+#### E — New `POST /auth/reset`
+
+Navigates browser to `ONETRUST_LOGIN_URL` keeping profile/cookies. Returns current auth state with `page_title`, `visible_markers`, `next_action`.
+
+#### F — 6-state `GET /auth/status`
+
+States: `logged in`, `manual login required`, `SSO pending`, `expired SSO page`, `not logged in`, `unknown auth state`. Response now includes `page_title`, `visible_markers`, `next_action`.
+
+### Files changed
+
+| File | Change |
+|------|--------|
+| `backend/app/features/onetrust/auth.py` | +`AUTH_TEXT_MARKERS`, `AUTH_FORM_SELECTORS`, `collect_auth_visible_markers`; rebuilt `detect_digital_on_demand_login`, `is_sso_or_manual_page`; updated `wait_for_auth_completion` (bring_to_front + fast IAM return); +`start_auth_flow`, `reset_login_page` |
+| `backend/app/features/onetrust/router.py` | Updated `GET /auth/status` (6 states + new fields); +`POST /auth/start`, `POST /auth/reset` |
+| `backend/app/features/onetrust/schemas.py` | Extended `AuthStatusResponse`; +`AuthStartResponse`, `AuthResetResponse` |
+| `backend/README.md` | +new endpoints in table; updated login section |
+| `.github/skills/onetrust-cookie-consent-automation/SKILL.md` | Step 2 uses `POST /auth/start`; +`POST /auth/reset` for stale sessions |
+
+### Verification
+
+| Command | Result |
+|---------|--------|
+| `python -m compileall app/` | OK — no syntax errors |
+| `python -m ruff check app/` | All checks passed |
+| `python -m mypy app/ --ignore-missing-imports` | Success: no issues found in 14 source files |

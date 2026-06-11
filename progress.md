@@ -35,8 +35,14 @@ FEATURES DONE:
     - extract_data_domain_script failure: rich debug (screenshot, modal_text_preview, visible_markers)
     - POST /add_app/stream: NDJSON step events via asyncio.Queue + background task
     - POST /filter_code/stream: same pattern ✓
+  M13 GitHub Copilot skill packaging:
+    - .github/skills/onetrust-cookie-consent-automation/SKILL.md (10-section orchestration guide)
+    - .github/skills/onetrust-cookie-consent-automation/README.md
+    - examples/ (user-request, success-response, failure-response, python-client-reference)
+    - .github/copilot-instructions.md (project-level trigger)
+    - backend/README.md updated (Copilot Skill section + streaming endpoints in table) ✓
 
-ACTIVE: COMPLETE — M12 done. Run: source .venv/bin/activate && cd backend && uvicorn app.main:app --reload
+ACTIVE: COMPLETE — M13 done. Run: source .venv/bin/activate && cd backend && uvicorn app.main:app --reload
 
 NEXT: none
 

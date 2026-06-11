@@ -37,6 +37,10 @@ class Settings(BaseSettings):
         default=300000,
         validation_alias="ONETRUST_SCAN_TIMEOUT_MS",
     )
+    onetrust_website_table_timeout_ms: int = Field(
+        default=120000,
+        validation_alias="ONETRUST_WEBSITE_TABLE_TIMEOUT_MS",
+    )
     debug: bool = Field(
         default=False,
         validation_alias="ONETRUST_DEBUG",

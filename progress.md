@@ -10,7 +10,7 @@
 > Post-compact restore block. Read this after `/compact` or at any new session start.
 > Update after every milestone. Keep under 40 lines.
 
-**Last updated:** 2026-06-09 | **Milestones since /compact:** 9
+**Last updated:** 2026-06-10 | **Milestones since /compact:** 10
 
 ```
 APP: onetrust-automation — FastAPI backend automating authorized OneTrust sandbox workflows via Playwright
@@ -25,8 +25,9 @@ FEATURES DONE:
   M8 debug responses + email prefill + scan polling — BE ✓
   M9 Mac/cross-platform compatibility — config extra="ignore", venv paths, .vscode/settings.json ✓
   M10 Websites page SPA readiness — wait_for_websites_page_ready, _find_add_website_button, collect_visible_markers ✓
+  M11 Split /add_app + new /filter_code — /add_app stops at step 11, POST /filter_code 12-step data-domain-script extraction ✓
 
-ACTIVE: COMPLETE — M10 done. Run: source .venv/bin/activate && cd backend && uvicorn app.main:app --reload
+ACTIVE: COMPLETE — M11 done. Run: source .venv/bin/activate && cd backend && uvicorn app.main:app --reload
 
 NEXT: none
 
@@ -50,7 +51,8 @@ MILESTONES SINCE /compact: 8
 |--------|------|---------|----------|------|--------|
 | GET | `/health` | — | `{status: str, browser_ready: bool}` | No | Task 1 |
 | POST | `/auth/login` | `{}` | `{status, message, current_url?, handled_modals?, screenshot?, failed_step?, steps[]?, debug?}` | No | Task 2 |
-| POST | `/add_app` | `{url: str}` | `{status, message, input_url?, selected_kit?, current_url?, screenshot?, steps[], scan_status?, matched_display_url?, debug?}` | No | Task 5 |
+| POST | `/add_app` | `{url: str}` | `{status, message, input_url?, selected_kit?, current_url?, screenshot?, steps[], next_action?, debug?}` | No | Task 5 |
+| POST | `/filter_code` | `{url: str}` | `{status, message, input_url, normalized_domain?, matched_display_url?, scan_status?, data_domain_script?, script_snippet?, current_url?, screenshot?, steps[], debug?}` | No | Task 11 |
 | GET | `/mapper/default` | — | `{default_experience_kit, mode}` | No | Task 5 |
 | POST | `/mapper/resolve` | `{url: str}` | `{url, experience_kit, mode}` | No | Task 5 |
 
@@ -92,6 +94,13 @@ POST /add_app     ──▶  backend/app/features/onetrust/router.py
                            └──▶ features/onetrust/auth.py (is_logged_in check)
                            └──▶ features/onetrust/mapper.py (get_experience_kit_for_url)
 
+POST /filter_code ──▶  backend/app/features/onetrust/router.py
+                           └──▶ features/onetrust/filter_code.py (filter_code_flow — 12 steps,
+                                                                   wait_websites_table_loaded,
+                                                                   _url_variants, _normalize_domain)
+                           └──▶ features/onetrust/browser.py (BrowserManager singleton)
+                           └──▶ features/onetrust/auth.py (is_logged_in check)
+
 GET/POST /mapper/* ──▶  backend/app/features/onetrust/router.py
                            └──▶ features/onetrust/mapper.py (DEFAULT_EXPERIENCE_KIT, get_experience_kit_for_url)
 
@@ -112,7 +121,8 @@ GET  /health      ──▶  backend/app/main.py (inline handler)
 | `PLAYWRIGHT_USER_DATA_DIR` | BE | Path to persistent Chromium profile | No (default: `.playwright/onetrust-profile`) |
 | `PLAYWRIGHT_TIMEOUT_MS` | BE | SSO wait timeout in milliseconds | No (default: 90000) |
 | `DEBUG` | BE | Show full tracebacks in error responses | No (default: false) |
-| `ONETRUST_SCAN_TIMEOUT_MS` | BE | Max milliseconds to poll for scan completion | No (default: 300000) |
+| `ONETRUST_SCAN_TIMEOUT_MS` | BE | (Unused after M11 — /add_app no longer polls scan) | No (default: 300000) |
+| `ONETRUST_WEBSITE_TABLE_TIMEOUT_MS` | BE | Max ms for table load + row search + scan poll in /filter_code | No (default: 120000) |
 
 ---
 
@@ -135,3 +145,4 @@ GET  /health      ──▶  backend/app/main.py (inline handler)
 - 2026-06-08 — Task 3 complete: POST /add_app — websites feature fully implemented (ensure_websites_page, click_add_website_button, click_add_website), ruff ✓, mypy ✓, route registered ✓. v1 complete.
 - 2026-06-08 — M8 complete: debug responses + email prefill + /add_app extended to 13 steps with scan polling; DebugInfo schema added; scan_timeout_ms config added; ruff ✓, mypy ✓, compileall ✓
 - 2026-06-09 — M10 complete: SPA readiness fix — wait_for_websites_page_ready (90s poll + reload retry), _find_add_website_button (6-selector cascade), collect_visible_markers; Step 2/3 updated; ruff ✓, mypy ✓
+- 2026-06-10 — M11 complete: /add_app cut to 11 steps (status: "website configuration confirmed" + next_action); POST /filter_code added (12-step flow, filter_code.py); ONETRUST_WEBSITE_TABLE_TIMEOUT_MS config; ruff ✓, mypy ✓ (14 files)

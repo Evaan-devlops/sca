@@ -829,3 +829,68 @@ On unhandled exception:
 | `python -m compileall app` | OK — no syntax errors |
 | `python -m ruff check app/` | All checks passed |
 | `python -m mypy app/ --ignore-missing-imports` | Success: no issues found in 14 source files |
+
+---
+
+## 23. M14 — GitHub Copilot Skill Packaging
+
+Generated: 2026-06-11
+
+### Skill name
+
+`onetrust-cookie-consent-automation`
+
+### Skill folder
+
+```
+.github/skills/onetrust-cookie-consent-automation/
+```
+
+### Files created
+
+| File | Purpose |
+|------|---------|
+| `.github/skills/onetrust-cookie-consent-automation/SKILL.md` | Copilot orchestration guide — 10 sections: purpose, when to use, backend requirements, 4-step flow, success/failure formats, security rules, implementation rule |
+| `.github/skills/onetrust-cookie-consent-automation/README.md` | User-facing guide: Copilot Chat usage, prerequisites, troubleshooting |
+| `.github/skills/onetrust-cookie-consent-automation/examples/user-request.md` | Example Copilot Chat prompts and `idea.md` request formats |
+| `.github/skills/onetrust-cookie-consent-automation/examples/success-response.md` | Sample success output with `data_domain_script`, `script_snippet`, completed steps |
+| `.github/skills/onetrust-cookie-consent-automation/examples/failure-response.md` | Sample failure outputs for extract failure, SSO issue, website not found |
+| `.github/skills/onetrust-cookie-consent-automation/examples/python-client-reference.py` | Reference Python client (documentation only) |
+| `.github/copilot-instructions.md` | Project-level trigger instruction for Copilot |
+
+### How Copilot detects when to use the skill
+
+The `SKILL.md` frontmatter `description:` explicitly names `/auth/login`, `/add_app`, `/filter_code`. `.github/copilot-instructions.md` adds a project-level trigger. Copilot matches on: OneTrust automation, add website, data-domain-script, production script.
+
+### Three backend tools used
+
+| Step | API | Purpose |
+|------|-----|---------|
+| 1 | `GET /health` | Confirm backend is alive |
+| 2 | `POST /auth/login` | Open browser session, complete SSO passthrough |
+| 3 | `POST /add_app` | Add website + confirm experience kit (11 steps) |
+| 4 | `POST /filter_code` | Find row, verify scan, extract `data-domain-script` (12 steps) |
+
+Streaming variants preferred when available.
+
+### Example user prompt
+
+```
+Use OneTrust automation for https://www.hiomtest.com and give me the production data-domain-script.
+```
+
+### Security restrictions
+
+Never bypass SSO/MFA/PingID/CAPTCHA. Never expose cookies, tokens, auth headers. No full page HTML. No OCR/screenshot/pixel automation. Authorized sandbox access only.
+
+### Backend changes
+
+None — all existing Python files unchanged.
+
+### Verification
+
+| Item | Result |
+|------|--------|
+| `python -m compileall app` | OK — no backend Python changes |
+| `.github/` files created | 7 new files confirmed |
+| `backend/README.md` updated | "Using GitHub Copilot Skill" section + streaming endpoints in table |

@@ -668,3 +668,164 @@ Selects the button near Publish/Publish test. If multiple `More` buttons exist, 
 |---------|--------|
 | `ruff check app\` | All checks passed |
 | `mypy app\ --ignore-missing-imports` | Success: no issues found in 14 source files |
+
+---
+
+## 21. M13 — Filter Code Wait/Extraction Fix
+
+Generated: 2026-06-11
+
+### Problems fixed
+
+| # | Problem | Root cause |
+|---|---------|------------|
+| 1 | `verify_scan_completed` passed before Pending became Completed | Checked whole page for "Completed" instead of specific matched row only |
+| 2 | `wait_website_details_page` completed too early | Used a single `wait_for_selector("text=Website details")` which matched before Publish button, domain, Completed chip, and actions menu were all present |
+| 3 | `open_actions_menu` could pick wrong three-dot button | Two More menus on details page (top-right near Publish; lower near Scan now); code didn't guarantee picking top-right |
+| 4 | `wait_production_scripts_modal` completed before `data-domain-script` rendered | Checked for structural modal markers but not that modal text actually contained the script attribute |
+| 5 | `extract_data_domain_script` failure response was not diagnostic | Only returned generic `debug` — missing `modal_text_preview`, `failed_step`, `next_action` fields useful for pasting to ChatGPT |
+
+### Fixes
+
+#### 1. Row-specific scan status polling (`verify_scan_completed`)
+
+- Added `_find_row_for_variants(page, variants)` helper — re-locates the specific matched row and returns its text.
+- `verify_scan_completed` now uses `_find_row_for_variants` exclusively; never scans the whole page.
+- Timeout changed from `table_timeout_ms` → `settings.onetrust_scan_timeout_ms` (default 300000ms).
+- Emits structured log lines: `"verify_scan_completed started"`, `"current scan status: Pending"`, `"waiting 5 seconds"`, `"current scan status: Completed"`.
+- On each poll: re-applies search filter, tries refresh button, re-finds row.
+- Timeout response includes `scan_status: <last_status>` field.
+
+#### 2. Full website details readiness wait (`wait_website_details_ready`)
+
+New `wait_website_details_ready(page: Page, domain: str) -> None` helper. Polls up to 60s for **all** of:
+1. URL matches `/cookies/scan-results/`
+2. `"Website details"` text visible
+3. Domain text visible (e.g. `www.hiomtest.com`)
+4. `"Completed"` chip/text visible
+5. `"Publish"` or `"Publish test"` button visible
+6. Top-right actions menu button visible (aria-label contains More/Options/Actions)
+7. No spinner/loading overlay
+
+Step 8 (`wait_website_details_page`) now calls `wait_website_details_ready(page, normalized_domain)`.
+
+#### 3. Top-right actions menu selection (`click_top_right_actions_menu`)
+
+New `click_top_right_actions_menu(page: Page) -> None` helper:
+- Checks candidates: `button[name~=More]`, `More options`, `aria-label*=More/Options/Actions`
+- For each visible candidate, reads bounding box; picks the one with **smallest `y` coordinate** (topmost = closest to Publish buttons)
+- After clicking, waits for `"Copy production scripts"` text (timeout 10s); raises `RuntimeError` with screenshot path if not found
+
+Step 9 (`open_actions_menu`) now calls `click_top_right_actions_menu(page)`.
+
+#### 4. Modal text collection from DOM descendants (`get_production_modal_text`)
+
+New `get_production_modal_text(page: Page) -> str` helper:
+- Locates `[role='dialog']` first; falls back to nearest ancestor of `"Production scripts"` text, then `[class*='modal']`, then `body`
+- Collects from: `modal.inner_text()`, all `textarea` elements (input_value + inner_text), all `pre` elements, all `code` elements, parent/grandparent of elements containing `otSDKStub.js`
+- Normalises whitespace (collapses spaces/tabs, trims 3+ newlines to 2)
+- Does NOT collect full page HTML — modal/dialog subtree only
+
+#### 5. Modal waits until script text is present (`wait_production_scripts_modal`)
+
+Step 11 now polls up to 30s (6 × 5s iterations), checking **all 6 conditions** per iteration:
+1. `"Production scripts"` heading
+2. `"Use on your production website"` text
+3. `"Copy scripts"` button
+4. `"Close"` button
+5. Modal text contains `otSDKStub.js`
+6. Modal text contains `data-domain-script`
+
+Uses `get_production_modal_text(page)` to check conditions 5 and 6.
+
+#### 6. Robust extraction with fallback regex (`extract_data_domain_script`)
+
+Step 12:
+- Primary regex: `data-domain-script=["']([^"']+)["']` on raw modal text
+- Fallback regex: same pattern on whitespace-normalised modal text (handles broken line-wraps)
+- `script_snippet` set to the specific line containing `otSDKStub.js`
+- Failure response includes all required diagnostic fields:
+  - `screenshot`, `current_url`, `page_title`, `visible_markers`
+  - `modal_text_preview` (first 1000 chars)
+  - `failed_step`, `next_action`, `possible_reason`
+
+### Files changed
+
+| File | Change |
+|------|--------|
+| `backend/app/features/onetrust/filter_code.py` | Rewrote Steps 6, 8, 9, 11, 12; added helpers `_find_row_for_variants`, `wait_website_details_ready`, `click_top_right_actions_menu`, `get_production_modal_text` |
+| `backend/backend/progress.md` | Updated to M13 state (was stale at M5) |
+
+### Verification
+
+| Command | Result |
+|---------|--------|
+| `python -m compileall app` | OK — no syntax errors |
+| `python -m ruff check app/` | All checks passed |
+| `python -m mypy app/ --ignore-missing-imports` | Success: no issues found in 14 source files |
+
+---
+
+## 22. M13 — Streaming APIs
+
+Generated: 2026-06-11
+
+### New Endpoints
+
+| Endpoint | Method | Content-Type | Description |
+|----------|--------|--------------|-------------|
+| `POST /add_app/stream` | POST | `application/x-ndjson` | NDJSON stream of all 11 add_app steps |
+| `POST /filter_code/stream` | POST | `application/x-ndjson` | NDJSON stream of all 12 filter_code steps |
+
+### Stream Event Format
+
+Each line is a JSON object terminated by `\n`:
+
+```
+{"event":"started","api":"add_app","input_url":"http://www.example.com"}
+{"event":"step_started","step":"confirm_login"}
+{"event":"step_completed","step":"confirm_login"}
+{"event":"step_started","step":"open_websites_page"}
+{"event":"step_completed","step":"open_websites_page"}
+...
+{"event":"finished","status":"website configuration confirmed","result":{...}}
+```
+
+On step failure:
+```
+{"event":"step_failed","step":"fill_website_url","message":"...","debug":{...}}
+{"event":"finished","status":"failed","result":{...}}
+```
+
+On unhandled exception:
+```
+{"event":"error","message":"..."}
+```
+
+### Security
+
+`debug` objects in `step_failed` events contain only: `possible_reason`, `next_action`, `exception_type`. No cookies, auth headers, SSO tokens, or full page HTML are streamed.
+
+### Implementation Pattern
+
+**`emit` callback** — `add_app_flow` and `filter_code_flow` accept an optional `emit: Callable[[dict], Awaitable[None]] | None = None` parameter. When `None` (default), all existing callers continue to work unchanged.
+
+**`_ndjson_stream` helper** in `router.py` — creates an `asyncio.Queue`, passes an `emit` closure that puts events onto the queue, runs the flow function as an `asyncio.Task`, and drains the queue line by line until the `None` sentinel is received.
+
+**`StreamingResponse`** is used instead of a regular JSON response; `response_model=` is intentionally omitted (incompatible with `StreamingResponse`).
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `backend/app/features/onetrust/websites.py` | `add_app_flow` signature → `(url, emit=None)`; emit calls added at all 11 steps |
+| `backend/app/features/onetrust/filter_code.py` | `filter_code_flow` signature → `(url, emit=None)`; emit calls added at all 12 steps |
+| `backend/app/features/onetrust/router.py` | Added `asyncio`, `json`, `StreamingResponse`, `AsyncGenerator` imports; added `_ndjson_stream()` helper; added `POST /add_app/stream` and `POST /filter_code/stream` routes |
+
+### Verification
+
+| Command | Result |
+|---------|--------|
+| `python -m compileall app` | OK — no syntax errors |
+| `python -m ruff check app/` | All checks passed |
+| `python -m mypy app/ --ignore-missing-imports` | Success: no issues found in 14 source files |

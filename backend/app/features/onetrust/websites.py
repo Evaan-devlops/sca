@@ -1,6 +1,7 @@
 import datetime
 import logging
 import re
+from collections.abc import Awaitable, Callable
 
 from playwright.async_api import Locator, Page, expect
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
@@ -133,7 +134,10 @@ async def wait_for_websites_page_ready(page: Page) -> None:
     raise RuntimeError("Add website button did not appear on Websites page after 90s")
 
 
-async def add_app_flow(url: str) -> dict:
+async def add_app_flow(
+    url: str,
+    emit: Callable[[dict], Awaitable[None]] | None = None,
+) -> dict:
     """
     Orchestrate the Add Website wizard flow (11 steps).
 
@@ -159,9 +163,13 @@ async def add_app_flow(url: str) -> dict:
     # ------------------------------------------------------------------ #
     step_name = "confirm_login"
     logger.info("[%s] started | url=%s", step_name, page.url)
+    if emit:
+        await emit({"event": "step_started", "step": step_name})
     if not await is_logged_in(page):
         logger.warning("[%s] not logged in", step_name)
         steps.append({"step": step_name, "status": "failed", "message": "Not logged in"})
+        if emit:
+            await emit({"event": "step_failed", "step": step_name, "message": "Not logged in", "debug": {}})
         return {
             "status": "not logged in",
             "message": "Please call /auth/login first or complete SSO in the opened browser.",
@@ -171,18 +179,24 @@ async def add_app_flow(url: str) -> dict:
         }
     logger.info("[%s] completed | url=%s", step_name, page.url)
     steps.append({"step": step_name, "status": "completed"})
+    if emit:
+        await emit({"event": "step_completed", "step": step_name})
 
     # ------------------------------------------------------------------ #
     # Step 2 — open_websites_page
     # ------------------------------------------------------------------ #
     step_name = "open_websites_page"
     logger.info("[%s] started | url=%s", step_name, page.url)
+    if emit:
+        await emit({"event": "step_started", "step": step_name})
     try:
         await wait_for_websites_page_ready(page)
         url_lower = page.url.lower()
         if any(ind in url_lower for ind in ("auth/login", "pingidentity", "sso", "pfizeridentity", "processing")):
             logger.warning("[%s] SSO redirect detected: %s", step_name, page.url)
             steps.append({"step": step_name, "status": "failed", "message": f"Redirected to SSO: {page.url}"})
+            if emit:
+                await emit({"event": "step_failed", "step": step_name, "message": f"Redirected to SSO: {page.url}", "debug": {}})
             return {
                 "status": "not logged in",
                 "message": "Session expired — redirected to SSO. Please call /auth/login first.",
@@ -192,6 +206,8 @@ async def add_app_flow(url: str) -> dict:
             }
         logger.info("[%s] completed | url=%s", step_name, page.url)
         steps.append({"step": step_name, "status": "completed"})
+        if emit:
+            await emit({"event": "step_completed", "step": step_name})
     except Exception as exc:
         logger.exception("[%s] failed: %s", step_name, exc)
         screenshot = await browser_manager.screenshot_on_error(step_name)
@@ -203,6 +219,11 @@ async def add_app_flow(url: str) -> dict:
             next_action="Check if a spinner or overlay is blocking the button",
             visible_markers=markers,
         )
+        if emit:
+            await emit({"event": "step_failed", "step": step_name, "message": str(exc), "debug": {
+                "step": debug.get("step"), "possible_reason": debug.get("possible_reason"),
+                "next_action": debug.get("next_action"), "exception_type": debug.get("exception_type"),
+            }})
         return {
             "status": "failed",
             "message": f"Step '{step_name}' failed: {exc}",
@@ -219,6 +240,8 @@ async def add_app_flow(url: str) -> dict:
     # ------------------------------------------------------------------ #
     step_name = "click_add_website"
     logger.info("[%s] started | url=%s", step_name, page.url)
+    if emit:
+        await emit({"event": "step_started", "step": step_name})
     try:
         btn = await _find_add_website_button(page)
         if btn is None:
@@ -251,10 +274,14 @@ async def add_app_flow(url: str) -> dict:
 
         logger.info("[%s] completed | url=%s", step_name, page.url)
         steps.append({"step": step_name, "status": "completed"})
+        if emit:
+            await emit({"event": "step_completed", "step": step_name})
     except Exception as exc:
         logger.exception("[%s] failed: %s", step_name, exc)
         screenshot = await browser_manager.screenshot_on_error(step_name)
         steps.append({"step": step_name, "status": "failed", "message": str(exc)})
+        if emit:
+            await emit({"event": "step_failed", "step": step_name, "message": str(exc), "debug": {}})
         return {
             "status": "failed",
             "message": f"Step '{step_name}' failed: {exc}",
@@ -270,6 +297,8 @@ async def add_app_flow(url: str) -> dict:
     # ------------------------------------------------------------------ #
     step_name = "fill_website_url"
     logger.info("[%s] started | url=%s", step_name, page.url)
+    if emit:
+        await emit({"event": "step_started", "step": step_name})
     try:
         url_input = page.get_by_label(re.compile(r"URL", re.I))
         if await url_input.count() == 0:
@@ -284,10 +313,14 @@ async def add_app_flow(url: str) -> dict:
 
         logger.info("[%s] completed | url=%s", step_name, page.url)
         steps.append({"step": step_name, "status": "completed", "value": url})
+        if emit:
+            await emit({"event": "step_completed", "step": step_name})
     except Exception as exc:
         logger.exception("[%s] failed: %s", step_name, exc)
         screenshot = await browser_manager.screenshot_on_error(step_name)
         steps.append({"step": step_name, "status": "failed", "message": str(exc)})
+        if emit:
+            await emit({"event": "step_failed", "step": step_name, "message": str(exc), "debug": {}})
         return {
             "status": "failed",
             "message": f"Step '{step_name}' failed: {exc}",
@@ -303,6 +336,8 @@ async def add_app_flow(url: str) -> dict:
     # ------------------------------------------------------------------ #
     step_name = "continue_to_banner_setup"
     logger.info("[%s] started | url=%s", step_name, page.url)
+    if emit:
+        await emit({"event": "step_started", "step": step_name})
     try:
         continue_btn = page.get_by_role("button", name=re.compile(r"Continue to banner setup", re.I))
         if await continue_btn.count() == 0:
@@ -325,10 +360,14 @@ async def add_app_flow(url: str) -> dict:
 
         logger.info("[%s] completed | url=%s", step_name, page.url)
         steps.append({"step": step_name, "status": "completed"})
+        if emit:
+            await emit({"event": "step_completed", "step": step_name})
     except Exception as exc:
         logger.exception("[%s] failed: %s", step_name, exc)
         screenshot = await browser_manager.screenshot_on_error(step_name)
         steps.append({"step": step_name, "status": "failed", "message": str(exc)})
+        if emit:
+            await emit({"event": "step_failed", "step": step_name, "message": str(exc), "debug": {}})
         return {
             "status": "failed",
             "message": f"Step '{step_name}' failed: {exc}",
@@ -344,6 +383,8 @@ async def add_app_flow(url: str) -> dict:
     # ------------------------------------------------------------------ #
     step_name = "select_experience_kit"
     logger.info("[%s] started | kit=%s | url=%s", step_name, kit_name, page.url)
+    if emit:
+        await emit({"event": "step_started", "step": step_name})
     try:
         kit_pattern = re.compile(r"US\s*-?\s*Geolocation Category test", re.I)
         kit_locator = page.get_by_text(kit_pattern)
@@ -365,10 +406,14 @@ async def add_app_flow(url: str) -> dict:
 
         logger.info("[%s] completed | url=%s", step_name, page.url)
         steps.append({"step": step_name, "status": "completed", "selected_kit": kit_name})
+        if emit:
+            await emit({"event": "step_completed", "step": step_name})
     except Exception as exc:
         logger.exception("[%s] failed: %s", step_name, exc)
         screenshot = await browser_manager.screenshot_on_error(step_name)
         steps.append({"step": step_name, "status": "failed", "message": str(exc)})
+        if emit:
+            await emit({"event": "step_failed", "step": step_name, "message": str(exc), "debug": {}})
         return {
             "status": "failed",
             "message": f"Step '{step_name}' failed: {exc}",
@@ -384,6 +429,8 @@ async def add_app_flow(url: str) -> dict:
     # ------------------------------------------------------------------ #
     step_name = "click_next_after_kit_selection"
     logger.info("[%s] started | url=%s", step_name, page.url)
+    if emit:
+        await emit({"event": "step_started", "step": step_name})
     try:
         next_btn = page.get_by_role("button", name=re.compile(r"^Next$", re.I))
         if await next_btn.count() == 0:
@@ -392,10 +439,14 @@ async def add_app_flow(url: str) -> dict:
 
         logger.info("[%s] completed | url=%s", step_name, page.url)
         steps.append({"step": step_name, "status": "completed"})
+        if emit:
+            await emit({"event": "step_completed", "step": step_name})
     except Exception as exc:
         logger.exception("[%s] failed: %s", step_name, exc)
         screenshot = await browser_manager.screenshot_on_error(step_name)
         steps.append({"step": step_name, "status": "failed", "message": str(exc)})
+        if emit:
+            await emit({"event": "step_failed", "step": step_name, "message": str(exc), "debug": {}})
         return {
             "status": "failed",
             "message": f"Step '{step_name}' failed: {exc}",
@@ -411,6 +462,8 @@ async def add_app_flow(url: str) -> dict:
     # ------------------------------------------------------------------ #
     step_name = "wait_review_configurations_page"
     logger.info("[%s] started | url=%s", step_name, page.url)
+    if emit:
+        await emit({"event": "step_started", "step": step_name})
     try:
         markers = ["Review configurations", "Review experience kit", "Geolocation rule group name", "Confirm"]
         loaded = False
@@ -425,6 +478,8 @@ async def add_app_flow(url: str) -> dict:
             raise RuntimeError("Review configurations page did not load — none of the expected markers appeared")
         logger.info("[%s] completed | url=%s", step_name, page.url)
         steps.append({"step": step_name, "status": "completed"})
+        if emit:
+            await emit({"event": "step_completed", "step": step_name})
     except Exception as exc:
         logger.exception("[%s] failed: %s", step_name, exc)
         screenshot = await browser_manager.screenshot_on_error(step_name)
@@ -434,6 +489,11 @@ async def add_app_flow(url: str) -> dict:
             possible_reason="Next button may not have navigated to Review configurations page",
             next_action="Check if experience kit selection completed correctly",
         )
+        if emit:
+            await emit({"event": "step_failed", "step": step_name, "message": str(exc), "debug": {
+                "possible_reason": debug.get("possible_reason"), "next_action": debug.get("next_action"),
+                "exception_type": debug.get("exception_type"),
+            }})
         return {
             "status": "failed",
             "message": f"Step '{step_name}' failed: {exc}",
@@ -450,6 +510,8 @@ async def add_app_flow(url: str) -> dict:
     # ------------------------------------------------------------------ #
     step_name = "click_accept_all_preview"
     logger.info("[%s] started | url=%s", step_name, page.url)
+    if emit:
+        await emit({"event": "step_started", "step": step_name})
     try:
         accept_btn = None
         # Try main page first
@@ -480,6 +542,8 @@ async def add_app_flow(url: str) -> dict:
             await accept_btn.first.click(timeout=10000)
             logger.info("[%s] clicked Accept All | url=%s", step_name, page.url)
             steps.append({"step": step_name, "status": "completed"})
+            if emit:
+                await emit({"event": "step_completed", "step": step_name})
         else:
             # Check if Confirm is already enabled without Accept All
             confirm_check = page.get_by_role("button", name=re.compile(r"^Confirm$", re.I))
@@ -491,6 +555,8 @@ async def add_app_flow(url: str) -> dict:
                     "status": "skipped",
                     "message": "Accept All not found or not required; Confirm button already enabled",
                 })
+                if emit:
+                    await emit({"event": "step_completed", "step": step_name})
             except Exception:  # noqa: BLE001
                 raise RuntimeError("Accept All button not found and Confirm button is not enabled")
     except Exception as exc:
@@ -502,6 +568,11 @@ async def add_app_flow(url: str) -> dict:
             possible_reason="Accept All button not found in main page or any iframe",
             next_action="Check if the banner preview is rendered in an iframe",
         )
+        if emit:
+            await emit({"event": "step_failed", "step": step_name, "message": str(exc), "debug": {
+                "possible_reason": debug.get("possible_reason"), "next_action": debug.get("next_action"),
+                "exception_type": debug.get("exception_type"),
+            }})
         return {
             "status": "failed",
             "message": f"Step '{step_name}' failed: {exc}",
@@ -518,6 +589,8 @@ async def add_app_flow(url: str) -> dict:
     # ------------------------------------------------------------------ #
     step_name = "click_confirm"
     logger.info("[%s] started | url=%s", step_name, page.url)
+    if emit:
+        await emit({"event": "step_started", "step": step_name})
     try:
         confirm_btn = page.get_by_role("button", name=re.compile(r"^Confirm$", re.I))
         if await confirm_btn.count() == 0:
@@ -526,6 +599,8 @@ async def add_app_flow(url: str) -> dict:
         await confirm_btn.first.click(timeout=10000)
         logger.info("[%s] completed | url=%s", step_name, page.url)
         steps.append({"step": step_name, "status": "completed"})
+        if emit:
+            await emit({"event": "step_completed", "step": step_name})
     except Exception as exc:
         logger.exception("[%s] failed: %s", step_name, exc)
         screenshot = await browser_manager.screenshot_on_error(step_name)
@@ -535,6 +610,11 @@ async def add_app_flow(url: str) -> dict:
             possible_reason="Confirm button not found or not enabled",
             next_action="Check if Accept All was clicked correctly",
         )
+        if emit:
+            await emit({"event": "step_failed", "step": step_name, "message": str(exc), "debug": {
+                "possible_reason": debug.get("possible_reason"), "next_action": debug.get("next_action"),
+                "exception_type": debug.get("exception_type"),
+            }})
         return {
             "status": "failed",
             "message": f"Step '{step_name}' failed: {exc}",
@@ -551,6 +631,8 @@ async def add_app_flow(url: str) -> dict:
     # ------------------------------------------------------------------ #
     step_name = "wait_return_to_websites_page"
     logger.info("[%s] started | url=%s", step_name, page.url)
+    if emit:
+        await emit({"event": "step_started", "step": step_name})
     try:
         websites_reached = False
         try:
@@ -568,6 +650,8 @@ async def add_app_flow(url: str) -> dict:
             raise RuntimeError("Did not return to Websites page after Confirm")
         logger.info("[%s] completed | url=%s", step_name, page.url)
         steps.append({"step": step_name, "status": "completed"})
+        if emit:
+            await emit({"event": "step_completed", "step": step_name})
     except Exception as exc:
         logger.exception("[%s] failed: %s", step_name, exc)
         screenshot = await browser_manager.screenshot_on_error(step_name)
@@ -577,6 +661,11 @@ async def add_app_flow(url: str) -> dict:
             possible_reason="Confirm may not have submitted or wizard may still be open",
             next_action="Check if a validation error or modal is blocking navigation",
         )
+        if emit:
+            await emit({"event": "step_failed", "step": step_name, "message": str(exc), "debug": {
+                "possible_reason": debug.get("possible_reason"), "next_action": debug.get("next_action"),
+                "exception_type": debug.get("exception_type"),
+            }})
         return {
             "status": "failed",
             "message": f"Step '{step_name}' failed: {exc}",

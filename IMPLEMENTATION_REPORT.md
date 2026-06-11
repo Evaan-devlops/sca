@@ -894,3 +894,172 @@ None — all existing Python files unchanged.
 | `python -m compileall app` | OK — no backend Python changes |
 | `.github/` files created | 7 new files confirmed |
 | `backend/README.md` updated | "Using GitHub Copilot Skill" section + streaming endpoints in table |
+
+---
+
+## 24. M15 — Digital On Demand IAM Login Handling
+
+Generated: 2026-06-11
+
+### Problem
+
+`/auth/login` timed out when OneTrust SSO redirected through the Pfizer "Digital On Demand / IAM: Sign In" page (Username + Password + "ACCEPT & CONNECT"). The existing `wait_for_sso_completion` loop had no awareness of this intermediate page, so it polled until timeout without giving the user any signal to act.
+
+### Security constraint (non-negotiable)
+
+Password is **never** stored, sent, or automated. Only the `ONETRUST_IAM_USERNAME` env var (optional) is used to prefill the Username field. No password field is ever touched.
+
+### Changes
+
+#### `backend/app/core/config.py`
+
+Added two fields to `Settings`:
+
+| Field | Env var | Default | Purpose |
+|-------|---------|---------|---------|
+| `onetrust_manual_login_timeout_ms` | `ONETRUST_MANUAL_LOGIN_TIMEOUT_MS` | `600000` | How long to wait for user to finish IAM login |
+| `onetrust_iam_username` | `ONETRUST_IAM_USERNAME` | `""` | Optional username to prefill (never password) |
+
+#### `backend/app/features/onetrust/auth.py`
+
+- **`_IamLoginTimeoutError`** — custom exception carrying a `screenshot` path; avoids attribute assignment on plain `RuntimeError` (mypy-safe).
+- **`detect_digital_on_demand_login(page) -> bool`** — reads `body.inner_text()`, checks for `"DIGITAL ON DEMAND"`, `"IAM: Sign In"`, `"ACCEPT & CONNECT"`. Returns `False` on any DOM error.
+- **`handle_digital_on_demand_manual_login(page, steps, emit)`** — orchestration helper:
+  1. Appends `detect_digital_on_demand_login` step to `steps`.
+  2. If `settings.onetrust_iam_username` is non-empty: locates Username input (3 fallback selectors), reads current value, fills only if empty. **Never locates or fills a password field.**
+  3. Appends `wait_for_manual_iam_login` started step; emits `step_started` event if `emit` provided.
+  4. Polls every 5s up to `onetrust_manual_login_timeout_ms`. On each poll: reads body text, checks URL + body for OneTrust auth markers. Returns on success.
+  5. On timeout: saves screenshot, raises `_IamLoginTimeoutError`.
+- **`login_onetrust(emit=None)`** — updated signature. After email + Next click:
+  1. `asyncio.sleep(2.5)` to allow page to respond.
+  2. Calls `detect_digital_on_demand_login(page)`.
+  3. If IAM detected → `handle_digital_on_demand_manual_login`; on `_IamLoginTimeoutError` → returns `status: "manual login required"` response.
+  4. If IAM not detected → proceeds with existing `wait_for_sso_completion` logic (unchanged).
+
+#### `backend/app/features/onetrust/schemas.py`
+
+Added `AuthStatusResponse(BaseModel)` — fields: `status: str`, `message: str`, `current_url: str | None`.
+
+#### `backend/app/features/onetrust/router.py`
+
+Added imports: `detect_digital_on_demand_login`, `is_logged_in`, `browser_manager`, `AuthStatusResponse`.
+
+Two new endpoints:
+
+| Endpoint | Method | Response |
+|----------|--------|---------|
+| `GET /auth/status` | GET | `AuthStatusResponse` — reports `"logged in"`, `"manual login required"`, `"SSO in progress"`, or `"not logged in"` |
+| `POST /auth/login/stream` | POST | NDJSON stream of login steps using the same `_ndjson_stream` helper |
+
+#### `backend/app/features/onetrust/websites.py`
+
+Step 1 (`confirm_login`) now checks `detect_digital_on_demand_login` when `is_logged_in` is `False`. Returns `"not logged in"` with IAM-specific message and `debug.next_action`.
+
+#### `backend/app/features/onetrust/filter_code.py`
+
+Same Step 1 IAM-aware check as `websites.py`.
+
+#### `backend/.env.example`
+
+Added:
+```
+ONETRUST_MANUAL_LOGIN_TIMEOUT_MS=600000
+ONETRUST_IAM_USERNAME=
+# Note: NEVER add a password field here. Password must be entered manually.
+```
+
+#### `backend/README.md`
+
+- Added `ONETRUST_MANUAL_LOGIN_TIMEOUT_MS` and `ONETRUST_IAM_USERNAME` to the Environment section.
+- Added "Login behavior: Digital On Demand / IAM" section describing the manual wait behavior.
+- Updated endpoints table with `GET /auth/status` and `POST /auth/login/stream`.
+
+### Files changed
+
+| File | Change |
+|------|--------|
+| `backend/app/core/config.py` | +2 fields: `onetrust_manual_login_timeout_ms`, `onetrust_iam_username` |
+| `backend/app/features/onetrust/auth.py` | +`_IamLoginTimeoutError`, +`detect_digital_on_demand_login`, +`handle_digital_on_demand_manual_login`; updated `login_onetrust` signature + IAM detection |
+| `backend/app/features/onetrust/schemas.py` | +`AuthStatusResponse` |
+| `backend/app/features/onetrust/router.py` | +imports; +`GET /auth/status`; +`POST /auth/login/stream` |
+| `backend/app/features/onetrust/websites.py` | Step 1 IAM-aware check; +import `detect_digital_on_demand_login` |
+| `backend/app/features/onetrust/filter_code.py` | Step 1 IAM-aware check; +import `detect_digital_on_demand_login` |
+| `backend/.env.example` | +2 new env vars + security comment |
+| `backend/README.md` | +IAM login behavior section; +env vars; +2 new endpoints in table |
+| `IMPLEMENTATION_REPORT.md` | +this section |
+
+### Verification
+
+| Command | Result |
+|---------|--------|
+| `python -m compileall app` | OK — no syntax errors |
+| `python -m ruff check app/` | All checks passed |
+| `python -m mypy app/ --ignore-missing-imports` | Success: no issues found in 14 source files |
+
+
+---
+
+## 25. M16 — Strict Login Gate Before Add App and Filter Code
+
+Generated: 2026-06-11
+
+### Problem
+
+`/auth/login` called `wait_for_sso_completion()` which returned `False` (timeout) when the browser landed on `devfederate.pfizer.com/idp/.../SSO.ping`. The caller received `"status": "SSO issue"` and automation continued to `/add_app` / `/filter_code` without a real session. Root cause: the SSO wait logic treated SSO/PingID/devfederate pages as timeout conditions instead of keep-waiting states.
+
+### Fixes
+
+#### 1. `is_sso_or_manual_page(page) -> bool` — `auth.py`
+
+Unified detector for all SSO/PingID/IAM intermediate states. Checks URL for `devfederate`, `pingidentity`, `/idp/`, `sso.ping`, `processing`, `pfizeridentity`, `auth/login`. Also checks body text for `Digital On Demand`, `IAM: Sign In`, `ACCEPT & CONNECT`, `PingID`, `Sign On`. Returns `True` on any match.
+
+#### 2. `wait_for_auth_completion(page, steps, emit=None)` — `auth.py`
+
+Polls every 5s until `SUCCESS_URL_MARKERS` (`/welcome`, `/cookies/websites`) or `SUCCESS_BODY_MARKERS` (`Sandbox Environment`, `Cookie Consent`, `Websites`) match. All other pages (SSO, PingID, devfederate, IAM) are keep-waiting states — never a timeout trigger. Logs url+visible markers every 15s. On first poll, optionally prefills IAM username if `ONETRUST_IAM_USERNAME` is set. Timeout raises `_IamLoginTimeoutError` with `failed_step`, `next_action`, `visible_markers`.
+
+#### 3. `_IamLoginTimeoutError` — `auth.py`
+
+Extended `__init__` to accept `failed_step`, `next_action`, `visible_markers` parameters.
+
+#### 4. `login_onetrust()` — `auth.py`
+
+Replaced the branching `detect_digital_on_demand_login` / `handle_digital_on_demand_manual_login` / `wait_for_sso_completion` with a single `wait_for_auth_completion(page, steps, emit=emit)` call. `_IamLoginTimeoutError` caught and returned as `"status": "manual login required"` with `failed_step`, `next_action`, `visible_markers` in response.
+
+#### 5. `GET /auth/status` — `router.py`
+
+Replaced `detect_digital_on_demand_login(page)` + separate SSO URL check with `is_sso_or_manual_page(page)` — single call covers devfederate, PingID, IAM, processing pages. Updated import.
+
+#### 6. Step 1 (`confirm_login`) — `websites.py`
+
+After `is_logged_in()` returns `False`: checks `is_sso_or_manual_page()`. If SSO page detected returns `"status": "login required"` with `debug.next_action` instructing caller to call `/auth/status` until logged in. Removed `detect_digital_on_demand_login` import.
+
+#### 7. Step 1 (`confirm_login`) — `filter_code.py`
+
+Same pattern as `websites.py`. Removed `detect_digital_on_demand_login` import.
+
+#### 8. `backend/README.md`
+
+Added "Login dependency rule" section describing required sequence and what `/add_app`/`/filter_code` return if called before login is complete.
+
+### Config used
+
+`ONETRUST_MANUAL_LOGIN_TIMEOUT_MS` (from M14, unchanged) — max wait for SSO completion.
+
+### Files changed
+
+| File | Change |
+|------|--------|
+| `backend/app/features/onetrust/auth.py` | `_IamLoginTimeoutError` extended; +`is_sso_or_manual_page`; +`wait_for_auth_completion`; `login_onetrust` uses unified wait |
+| `backend/app/features/onetrust/router.py` | `auth_status` uses `is_sso_or_manual_page`; import updated |
+| `backend/app/features/onetrust/websites.py` | Step 1 uses `is_sso_or_manual_page`; import updated |
+| `backend/app/features/onetrust/filter_code.py` | Step 1 uses `is_sso_or_manual_page`; import updated |
+| `backend/README.md` | +Login dependency rule section |
+| `IMPLEMENTATION_REPORT.md` | +this section |
+
+### Verification
+
+| Command | Result |
+|---------|--------|
+| `python -m compileall app` | OK — no syntax errors |
+| `python -m ruff check app/` | All checks passed |
+| `python -m mypy app/ --ignore-missing-imports` | Success: no issues found in 14 source files |

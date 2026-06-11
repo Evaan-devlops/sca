@@ -108,4 +108,10 @@ class FilterCodeResponse(BaseModel):
     debug: DebugInfo | None = None
 
 
+class AuthStatusResponse(BaseModel):
+    status: str
+    message: str
+    current_url: str | None = None
+
+
 LoginResponse.model_rebuild()

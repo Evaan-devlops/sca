@@ -46,6 +46,7 @@ Required endpoints:
 |--------|------|---------|
 | GET | `/health` | Confirm backend is alive |
 | POST | `/auth/login` | SSO login via persistent browser session |
+| GET | `/auth/status` | Check current session state (use to confirm login after IAM completion) |
 | POST | `/add_app` | Add website + confirm experience kit (11 steps) |
 | POST | `/filter_code` | Find website row, verify scan, extract data-domain-script (12 steps) |
 
@@ -100,9 +101,20 @@ Handle response `status`:
 | Status | Action |
 |--------|--------|
 | `"logged in"` | Continue to Step 3 |
-| `"SSO issue"` | Stop. Tell user: "SSO did not complete. A browser window should be open — complete the PingID/SSO login manually, then call this again." |
+| `"manual login required"` | Tell user (see below). Poll `GET /auth/status` until `"logged in"`, then continue to Step 3. |
+| `"SSO issue"` | Treat same as `"manual login required"` — tell user, poll `GET /auth/status`. |
 | `"configuration error"` | Stop. Show `message` and `debug.next_action` from response. |
 | `"error"` / any other | Stop. Show `failed_step`, `message`, `debug.next_action`, `screenshot` path. |
+
+> **HARD RULE:** Copilot must **NEVER** call `/add_app` or `/filter_code` unless `/auth/login` or `/auth/status` returns status exactly `"logged in"`. Any other status means login is not complete. Calling `/add_app` or `/filter_code` before login is confirmed will return `{"status": "login required"}` and fail immediately.
+
+**When status is `"manual login required"` or `"SSO issue"`**, tell the user:
+
+> "Login is not complete yet. Please finish SSO/PingID/Digital On Demand login in the opened browser. After the browser reaches the OneTrust Sandbox Environment, ask me to continue."
+
+Then poll `GET http://127.0.0.1:8000/auth/status` every 10–15 seconds. Only when it returns `"logged in"` should you proceed to Step 3.
+
+If the user says they have completed login, call `GET /auth/status` immediately to confirm before proceeding.
 
 ### Step 3 — Add website
 

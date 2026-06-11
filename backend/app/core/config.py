@@ -45,6 +45,14 @@ class Settings(BaseSettings):
         default=False,
         validation_alias="ONETRUST_DEBUG",
     )
+    onetrust_manual_login_timeout_ms: int = Field(
+        default=600000,
+        validation_alias="ONETRUST_MANUAL_LOGIN_TIMEOUT_MS",
+    )
+    onetrust_iam_username: str = Field(
+        default="",
+        validation_alias="ONETRUST_IAM_USERNAME",
+    )
 
 
 settings = Settings()

@@ -62,6 +62,8 @@ PLAYWRIGHT_HEADLESS=false
 PLAYWRIGHT_USER_DATA_DIR=.playwright/onetrust-profile
 PLAYWRIGHT_TIMEOUT_MS=90000
 ONETRUST_SCAN_TIMEOUT_MS=300000
+ONETRUST_MANUAL_LOGIN_TIMEOUT_MS=600000
+ONETRUST_IAM_USERNAME=
 ```
 
 ## Run
@@ -100,6 +102,8 @@ GET http://localhost:8000/mapper/default
 |--------|------|-------------|
 | GET | `/health` | Browser ready status |
 | POST | `/auth/login` | Login to OneTrust via SSO |
+| GET | `/auth/status` | Check current session state (logged in / IAM / SSO / not logged in) |
+| POST | `/auth/login/stream` | Same as `/auth/login`, NDJSON step stream |
 | POST | `/add_app` | Run Add Website wizard (11 steps) |
 | POST | `/add_app/stream` | Same as above, NDJSON step stream |
 | POST | `/filter_code` | Find website, verify scan, extract data-domain-script |
@@ -142,6 +146,35 @@ Use OneTrust automation for https://www.example.com and give me the data-domain-
 **5. If SSO appears** — complete PingID/SSO manually in the opened browser, then ask Copilot to continue or retry `/auth/login`.
 
 See `.github/skills/onetrust-cookie-consent-automation/README.md` for full usage and troubleshooting.
+
+## Login behavior: Digital On Demand / IAM
+
+`/auth/login` may encounter the Pfizer Digital On Demand IAM sign-in page during SSO.
+
+When this happens:
+- The app detects the IAM page automatically
+- **The app will not store or automate password entry**
+- The browser window stays open — enter your password manually and click **ACCEPT & CONNECT**
+- The API waits up to `ONETRUST_MANUAL_LOGIN_TIMEOUT_MS` (default: 10 minutes)
+- If timeout occurs, call `/auth/login` or check `/auth/status`, then complete login manually
+
+Optional: set `ONETRUST_IAM_USERNAME` to have the Username field pre-filled automatically.
+No password should ever be stored in `.env`.
+
+## Login dependency rule
+
+`/add_app` and `/filter_code` will **not run** while the browser is on any SSO, PingID, or Digital On Demand login page.
+
+The required sequence is:
+
+1. `POST /auth/login` — must return `"status": "logged in"`
+2. If it returns `"manual login required"` or `"SSO issue"`:
+   - Complete SSO/PingID/IAM login manually in the opened browser
+   - Call `GET /auth/status` repeatedly until it returns `"status": "logged in"`
+3. Only then call `POST /add_app`, then `POST /filter_code`
+
+Calling `/add_app` or `/filter_code` before login is complete returns:
+`{"status": "login required", "message": "...", "next_action": "..."}`
 
 ## Notes
 

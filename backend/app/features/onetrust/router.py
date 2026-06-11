@@ -6,12 +6,14 @@ from collections.abc import AsyncGenerator, Awaitable, Callable
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
-from app.features.onetrust.auth import login_onetrust
+from app.features.onetrust.auth import is_logged_in, is_sso_or_manual_page, login_onetrust
 from app.features.onetrust.filter_code import filter_code_flow
 from app.features.onetrust.mapper import DEFAULT_EXPERIENCE_KIT, get_experience_kit_for_url
+from app.features.onetrust.browser import browser_manager
 from app.features.onetrust.schemas import (
     AddAppRequest,
     AddAppResponse,
+    AuthStatusResponse,
     FilterCodeRequest,
     FilterCodeResponse,
     LoginResponse,
@@ -67,6 +69,49 @@ async def _ndjson_stream(
 async def auth_login() -> LoginResponse:
     result = await login_onetrust()
     return LoginResponse(**result)
+
+
+@router.get("/auth/status", response_model=AuthStatusResponse)
+async def auth_status() -> AuthStatusResponse:
+    """Check whether the current browser session is logged into OneTrust."""
+    page = await browser_manager.get_page()
+
+    if await is_logged_in(page):
+        return AuthStatusResponse(
+            status="logged in",
+            message="OneTrust session is authenticated.",
+            current_url=page.url,
+        )
+
+    if await is_sso_or_manual_page(page):
+        return AuthStatusResponse(
+            status="manual login required",
+            message=(
+                "SSO/PingID/manual login page is open. "
+                "Complete login manually, then call /auth/status again."
+            ),
+            current_url=page.url,
+        )
+
+    return AuthStatusResponse(
+        status="not logged in",
+        message="Call /auth/login.",
+        current_url=page.url,
+    )
+
+
+@router.post("/auth/login/stream")
+async def auth_login_stream() -> StreamingResponse:
+    """Stream step-by-step NDJSON events for /auth/login workflow."""
+    async def generate() -> AsyncGenerator[str, None]:
+        async for line in _ndjson_stream(
+            "auth_login",
+            "",
+            lambda emit_fn: login_onetrust(emit=emit_fn),
+        ):
+            yield line
+
+    return StreamingResponse(generate(), media_type="application/x-ndjson")
 
 
 @router.post("/add_app", response_model=AddAppResponse)

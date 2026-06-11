@@ -21,7 +21,7 @@ BE-MODULES DONE:
   [onetrust]   → features/onetrust/browser.py, auth.py, mapper.py,
                  websites.py, filter_code.py, schemas.py, router.py
 
-BE-ACTIVE: M13 complete — streaming endpoints added
+BE-ACTIVE: M16 complete — Unified SSO wait + strict login gate
 
 BE-NEXT: none
 
@@ -35,10 +35,17 @@ BE-ENV:
   ONETRUST_SCAN_TIMEOUT_MS         = 300000  (default 5 min — for verify_scan_completed polling)
   ONETRUST_WEBSITE_TABLE_TIMEOUT_MS = 120000  (default 2 min — for table load + row search)
   ONETRUST_DEBUG                   = false  (default)
+  ONETRUST_MANUAL_LOGIN_TIMEOUT_MS = 600000  (default 10 min — IAM manual login wait)
+  ONETRUST_IAM_USERNAME            = ""  (optional — prefills Username field only; NEVER store password)
 
 BE-CONTRACTS EXPOSED (source of truth in root progress.md):
   GET  /health               → {status: str, browser_ready: bool}
   POST /auth/login           {} → {status, message, current_url?, handled_modals?, screenshot?, steps?, debug?}
+                               status values: "logged in" | "manual login required" | "error" | "configuration error"
+  GET  /auth/status          → {status: str, message: str, current_url?: str}
+                               status values: "logged in" | "manual login required" | "not logged in"
+  POST /auth/login/stream    {} → NDJSON stream (application/x-ndjson)
+                               events: started | step_started | step_completed | step_failed | finished | error
   POST /add_app              {url: str} → {status, message, input_url?, current_url?, screenshot?, steps?, debug?, next_action?}
   POST /add_app/stream       {url: str} → NDJSON stream (application/x-ndjson)
                                events: started | step_started | step_completed | step_failed | finished | error
@@ -63,17 +70,17 @@ BE-PATTERNS:
 
 ## Resume Point
 
-**Active task:** M13 complete — streaming endpoints added
+**Active task:** M16 complete — Unified SSO wait + strict login gate
 **Last file written:** backend/app/features/onetrust/router.py
 
-**Done within M13 (streaming):**
-- [x] `add_app_flow(url, emit=None)` — optional emit callback added, all 11 steps emit start/complete/failed
-- [x] `filter_code_flow(url, emit=None)` — optional emit callback added, all 12 steps emit start/complete/failed
-- [x] `_ndjson_stream()` async generator in router.py — asyncio.Queue + background task pattern
-- [x] `POST /add_app/stream` — NDJSON streaming endpoint, media_type=application/x-ndjson
-- [x] `POST /filter_code/stream` — NDJSON streaming endpoint, media_type=application/x-ndjson
-- [x] Existing routes unchanged — no regression
-- [x] debug objects in step_failed events omit cookies/auth/html (only reason/action/exc_type)
+**Done within M16:**
+- [x] `_IamLoginTimeoutError` — extended with `failed_step`, `next_action`, `visible_markers`
+- [x] `is_sso_or_manual_page(page)` — unified SSO/PingID/devfederate/IAM detector
+- [x] `wait_for_auth_completion(page, steps, emit)` — polls until OneTrust page; keep-waiting on all SSO pages; logs every 15s; timeout → `_IamLoginTimeoutError`
+- [x] `login_onetrust(emit=None)` — uses `wait_for_auth_completion` (replaces branching SSO/IAM logic)
+- [x] `GET /auth/status` — uses `is_sso_or_manual_page` (single call replaces two checks)
+- [x] `websites.py` + `filter_code.py` Step 1 — checks `is_sso_or_manual_page`; returns `"login required"` if SSO page
+- [x] ruff ✓, mypy ✓, compileall ✓
 
 **Blockers:** none
 
@@ -90,6 +97,7 @@ backend/
                                          Fields: onetrust_base_url, onetrust_login_url, onetrust_email,
                                          playwright_headless, playwright_user_data_dir, playwright_timeout_ms,
                                          onetrust_scan_timeout_ms (300000), onetrust_website_table_timeout_ms (120000),
+                                         onetrust_manual_login_timeout_ms (600000), onetrust_iam_username (""),
                                          debug
       logging.py                       — configure_logging(), shared logger
       errors.py                        — AppError, validation_error_handler,
@@ -101,9 +109,11 @@ backend/
         __init__.py                    — empty
         browser.py                     — BrowserManager: start(), get_page(), close(),
                                          screenshot_on_error(), is_ready; browser_manager singleton
-        auth.py                        — login_onetrust(), fill_email_or_confirm_prefilled_email(),
-                                         wait_for_sso_completion(), handle_post_login_modals(),
-                                         is_logged_in()
+        auth.py                        — login_onetrust(emit=None), fill_email_or_confirm_prefilled_email(),
+                                         wait_for_auth_completion(), wait_for_sso_completion(),
+                                         handle_post_login_modals(), is_logged_in(),
+                                         is_sso_or_manual_page(), detect_digital_on_demand_login(),
+                                         handle_digital_on_demand_manual_login(), _IamLoginTimeoutError
         websites.py                    — add_app_flow(url, emit=None) — 11 steps, optional emit callback
                                          confirm_login→open_websites_page→click_add_website→
                                          fill_website_url→continue_to_banner_setup→select_experience_kit→
@@ -120,8 +130,10 @@ backend/
         mapper.py                      — DEFAULT_EXPERIENCE_KIT, get_experience_kit_for_url()
         schemas.py                     — LoginResponse, AddAppRequest, AddAppResponse,
                                          FilterCodeRequest, FilterCodeResponse, StepResult, DebugInfo,
+                                         AuthStatusResponse,
                                          MapperDefaultResponse, MapperResolveRequest, MapperResolveResponse
-        router.py                      — POST /auth/login, POST /add_app, POST /add_app/stream,
+        router.py                      — POST /auth/login, GET /auth/status, POST /auth/login/stream,
+                                         POST /add_app, POST /add_app/stream,
                                          POST /filter_code, POST /filter_code/stream,
                                          GET /mapper/default, POST /mapper/resolve
                                          _ndjson_stream() async generator helper
@@ -154,5 +166,6 @@ None — no database in this version.
 ## Backend Dev Log
 
 <!-- Add entries here after each completed backend milestone. Keep last 3 only. -->
-- 2026-06-11 — M13 complete: /filter_code reliability fixes — row-specific scan polling, wait_website_details_ready, click_top_right_actions_menu, get_production_modal_text, modal wait-until-data-domain, rich failure debug, ruff ✓, mypy ✓ compileall ✓
 - 2026-06-11 — M13 streaming: POST /add_app/stream + POST /filter_code/stream — NDJSON streaming via asyncio.Queue + emit callback pattern; existing routes unchanged; ruff ✓, mypy ✓, compileall ✓
+- 2026-06-11 — M15: Digital On Demand IAM login handling — detect_digital_on_demand_login, handle_digital_on_demand_manual_login (manual wait loop, optional username prefill, never stores/automates password), login_onetrust(emit=None), GET /auth/status, POST /auth/login/stream, IAM-aware Step 1 in websites.py + filter_code.py; ruff ✓, mypy ✓, compileall ✓
+- 2026-06-11 — M16: Unified SSO wait + strict login gate — is_sso_or_manual_page() covers devfederate/PingID/IAM/auth/login; wait_for_auth_completion() polls until OneTrust authenticated (never times out on SSO pages); login_onetrust uses unified wait; GET /auth/status uses is_sso_or_manual_page; websites.py + filter_code.py Step 1 return "login required" if SSO page detected; ruff ✓, mypy ✓, compileall ✓

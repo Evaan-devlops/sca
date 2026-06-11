@@ -7,7 +7,7 @@ from playwright.async_api import Page
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from app.core.config import settings
-from app.features.onetrust.auth import is_logged_in
+from app.features.onetrust.auth import is_logged_in, is_sso_or_manual_page
 from app.features.onetrust.browser import browser_manager
 
 logger = logging.getLogger(__name__)
@@ -441,12 +441,49 @@ async def filter_code_flow(
     if emit:
         await emit({"event": "step_started", "step": step_name})
     if not await is_logged_in(page):
+        logger.warning("[%s] not logged in", step_name)
+        if await is_sso_or_manual_page(page):
+            steps.append({
+                "step": step_name,
+                "status": "failed",
+                "message": "Login is incomplete — SSO/PingID/manual login page detected",
+            })
+            if emit:
+                await emit({
+                    "event": "step_failed",
+                    "step": step_name,
+                    "message": "Login is incomplete. Complete SSO first.",
+                })
+                await emit({
+                    "event": "finished",
+                    "status": "login required",
+                    "next_action": "Call /auth/login and complete SSO manually.",
+                })
+            return {
+                "status": "login required",
+                "message": (
+                    "OneTrust login is not complete. "
+                    "Complete SSO/manual login first, then retry this API."
+                ),
+                "failed_step": step_name,
+                "input_url": url,
+                "current_url": page.url,
+                "steps": steps,
+                "debug": {
+                    "possible_reason": "Browser is still on SSO/PingID/manual login page",
+                    "next_action": (
+                        "Call /auth/login, complete SSO manually in opened browser, "
+                        "then call /auth/status until it returns logged in."
+                    ),
+                },
+            }
         steps.append({"step": step_name, "status": "failed", "message": "Not logged in"})
         if emit:
             await emit({"event": "step_failed", "step": step_name, "message": "Not logged in", "debug": {}})
+            await emit({"event": "finished", "status": "not logged in"})
         return {
             "status": "not logged in",
-            "message": "Please call /auth/login first or complete SSO in the opened browser.",
+            "message": "Please call /auth/login first.",
             "input_url": url,
             "current_url": page.url,
             "steps": steps,

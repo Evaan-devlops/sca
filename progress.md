@@ -41,8 +41,27 @@ FEATURES DONE:
     - examples/ (user-request, success-response, failure-response, python-client-reference)
     - .github/copilot-instructions.md (project-level trigger)
     - backend/README.md updated (Copilot Skill section + streaming endpoints in table) ✓
+  M14 Digital On Demand IAM login handling:
+    - detect_digital_on_demand_login() — text-locator check for IAM page markers
+    - handle_digital_on_demand_manual_login() — optional username prefill, 5s poll loop, timeout → _IamLoginTimeoutError
+    - login_onetrust(emit=None) — IAM branch after email+Next; returns "manual login required" on timeout
+    - GET /auth/status — lightweight session check (logged in / manual login required / SSO in progress / not logged in)
+    - POST /auth/login/stream — NDJSON streaming login
+    - /add_app + /filter_code Step 1 IAM-aware: returns "not logged in" with IAM message if detected
+    - config: onetrust_manual_login_timeout_ms (600000), onetrust_iam_username ("") — no password field ever
+    - backend/README.md: IAM section + env vars
+    - SKILL.md: manual login required handling + GET /auth/status in flow ✓
 
-ACTIVE: COMPLETE — M13 done. Run: source .venv/bin/activate && cd backend && uvicorn app.main:app --reload
+  M15 Strict login gate — unified SSO wait:
+    - is_sso_or_manual_page() — single detector covering devfederate/pingidentity/idp/sso.ping/IAM/PingID
+    - wait_for_auth_completion() — unified poll loop; treats all SSO intermediate pages as keep-waiting; logs every 15s; timeout → "manual login required"
+    - login_onetrust() uses wait_for_auth_completion() — replaces separate wait_for_sso_completion + handle_digital_on_demand_manual_login branches
+    - GET /auth/status uses is_sso_or_manual_page() — "SSO in progress" merged into "manual login required"
+    - /add_app + /filter_code Step 1: is_sso_or_manual_page() → "login required" with next_action
+    - backend/README.md: "Login dependency rule" section
+    - SKILL.md: hard rule — never call /add_app or /filter_code unless /auth/status returns "logged in" ✓
+
+ACTIVE: COMPLETE — M15 done. Run: source .venv/bin/activate && cd backend && uvicorn app.main:app --reload
 
 NEXT: none
 

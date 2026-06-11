@@ -10,7 +10,7 @@
 > Post-compact restore block. Read this after `/compact` or at any new session start.
 > Update after every milestone. Keep under 40 lines.
 
-**Last updated:** 2026-06-11 | **Milestones since /compact:** 10
+**Last updated:** 2026-06-11 | **Milestones since /compact:** 11
 
 ```
 APP: onetrust-automation — FastAPI backend automating authorized OneTrust sandbox workflows via Playwright
@@ -61,7 +61,20 @@ FEATURES DONE:
     - backend/README.md: "Login dependency rule" section
     - SKILL.md: hard rule — never call /add_app or /filter_code unless /auth/status returns "logged in" ✓
 
-ACTIVE: COMPLETE — M15 done. Run: source .venv/bin/activate && cd backend && uvicorn app.main:app --reload
+  M16 Frame-aware auth detection + fast IAM return + POST /auth/start + POST /auth/reset + 6-state /auth/status:
+    - collect_auth_visible_markers(page) — iterates [page]+page.frames; checks AUTH_TEXT_MARKERS + AUTH_FORM_SELECTORS via is_visible(timeout=500)
+    - detect_digital_on_demand_login() rebuilt — delegates to collect_auth_visible_markers (iframe-aware)
+    - is_sso_or_manual_page() rebuilt — same; no longer calls inner_text("body")
+    - wait_for_auth_completion() — bring_to_front() each poll; fast IAM return on detect_digital_on_demand_login (no 10-min wait)
+    - start_auth_flow() — non-blocking: navigate → fill email → wait 3s → classify → return
+    - reset_login_page() — navigate to login URL, return state with page_title + visible_markers
+    - POST /auth/start — AuthStartResponse
+    - POST /auth/reset — AuthResetResponse
+    - GET /auth/status — 6 states; +page_title, visible_markers, next_action
+    - schemas: AuthStatusResponse extended; +AuthStartResponse, +AuthResetResponse
+    - README.md + SKILL.md updated ✓
+
+ACTIVE: COMPLETE — M16 done. Run: source .venv/bin/activate && cd backend && uvicorn app.main:app --reload
 
 NEXT: none
 
@@ -84,7 +97,10 @@ MILESTONES SINCE /compact: 10
 | Method | Path | Request | Response | Auth | Status |
 |--------|------|---------|----------|------|--------|
 | GET | `/health` | — | `{status: str, browser_ready: bool}` | No | Task 1 |
+| POST | `/auth/start` | `{}` | `{status, message, current_url?, visible_markers[], next_action?, failed_step?, steps[], debug?}` | No | M16 |
+| POST | `/auth/reset` | `{}` | `{status, message, current_url?, page_title?, visible_markers[], next_action?}` | No | M16 |
 | POST | `/auth/login` | `{}` | `{status, message, current_url?, handled_modals?, screenshot?, failed_step?, steps[]?, debug?}` | No | Task 2 |
+| GET | `/auth/status` | — | `{status, message, current_url?, page_title?, visible_markers[], next_action?}` | No | M14/M16 |
 | POST | `/add_app` | `{url: str}` | `{status, message, input_url?, selected_kit?, current_url?, screenshot?, steps[], next_action?, debug?}` | No | Task 5 |
 | POST | `/filter_code` | `{url: str}` | `{status, message, input_url, normalized_domain?, matched_display_url?, scan_status?, data_domain_script?, script_snippet?, current_url?, screenshot?, steps[], debug?}` | No | Task 11 |
 | POST | `/add_app/stream` | `{url: str}` | NDJSON stream of step events (`application/x-ndjson`) | No | Task 13 |
@@ -92,7 +108,9 @@ MILESTONES SINCE /compact: 10
 | GET | `/mapper/default` | — | `{default_experience_kit, mode}` | No | Task 5 |
 | POST | `/mapper/resolve` | `{url: str}` | `{url, experience_kit, mode}` | No | Task 5 |
 
-**`/auth/login` status values:** `"logged in"` / `"SSO issue"` / `"error"`
+**`/auth/start` status values:** `"logged in"` / `"manual login required"` / `"SSO pending"` / `"configuration error"` / `"unknown auth state"`
+**`/auth/status` status values (6):** `"logged in"` / `"manual login required"` / `"SSO pending"` / `"expired SSO page"` / `"not logged in"` / `"unknown auth state"`
+**`/auth/login` status values:** `"logged in"` / `"manual login required"` / `"error"`
 **`/add_app` status values:** `"website url scan_status completed"` / `"not logged in"` / `"failed"` / `"scan failed"`
 **Standard error shape (unhandled):** `{detail: str}`
 

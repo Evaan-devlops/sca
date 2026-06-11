@@ -112,6 +112,29 @@ class AuthStatusResponse(BaseModel):
     status: str
     message: str
     current_url: str | None = None
+    page_title: str | None = None
+    visible_markers: list[str] = Field(default_factory=list)
+    next_action: str | None = None
+
+
+class AuthStartResponse(BaseModel):
+    status: str
+    message: str
+    current_url: str | None = None
+    visible_markers: list[str] = Field(default_factory=list)
+    next_action: str | None = None
+    failed_step: str | None = None
+    steps: list[StepResult] = Field(default_factory=list)
+    debug: DebugInfo | None = None
+
+
+class AuthResetResponse(BaseModel):
+    status: str
+    message: str
+    current_url: str | None = None
+    page_title: str | None = None
+    visible_markers: list[str] = Field(default_factory=list)
+    next_action: str | None = None
 
 
 LoginResponse.model_rebuild()

@@ -1,0 +1,22 @@
+﻿step,step_id,action,Element name,Element type,value,expect,dependency,condition,if_true,if_false,notes,Confirmation
+1,,open,browser,,https://uat-de.onetrust.com,Home page visible,none,email address is already filled,3,2,Open the login page; email address is already filled
+2,,fill,email address,textbox,shakti.sinha@pfizer.com,,1,,,,wait for a second after page load then fill only if empty
+3,,click,next,button,,SSO login page:,"1,2",,,,shall not be clicked If textbox is empty
+4,,fill,Username,textbox,sinhas43,,,,,,
+5,,fill,Password,textbox,xyz...,,,,,,
+6,,click,ACCEPT & CONNECT,button,,,,,,,
+7,,open,browser,,https://uat-de.onetrust.com/cookies/websites,,,,,,complete the SSO login
+8,,fill,Search,textbox,{{input.website_url}},Search ready,"1,3,7",,,,extract url given in prompt and fill it in search box
+9,,enter,Search,keyboard enter,,Results shown,"1,3,7,8",entry found in expected list,11,10,"Submit search, expect some list of urls"
+10,,click,Add website,button,,Add website page,"1,3,7",,,,Add url since it is not already added
+11,,wait/verify,Scan status,Table cell,completed,,,,,,"wait for scan status value to be changed to completed, if its current value is 'Pending'"
+12,,click,1st url under website colomun,link,,Website details page,"1,3,7,8,9,11",,,,1st check Scan status if it is in pending state then wait for it to change to completed state then only click the 1st url
+13,,click,more options/ellipsis (...),button,,list of 2 element,"1,3,7,8,9,12",,,,
+14,,click,copy production scripts,Menu item,,a modal will open,"1,3,7,8,9,12,13",,,,"Production scripts shall open, let it load completely"
+15,,copy,"value of ""data-domain-script""",text,,,"1,3,7,8,9,12,13,14",,,,"select and copy value of data-domain-script,this selected text is called code"
+16,,fill,url,textbox,{{input.website_url}},,"1,3,7,10",,,,enter website name shall have atleast .com at the end
+17,,click,Continue to banner setup,button,,takes to https://uat-de.onetrust.com/cookies/new-user-wizard,"1,3,7,10,15",,,,"takes you to https://uat-de.onetrust.com/cookies/new-user-wizard page, wait to let page load fully"
+18,,click,US-Geolocation Category test,card,,,"1,3,7,10,15,16",,,,click on card 'US-Geolocation Category test'
+19,,click,next,button,,,"1,3,7,10,15,16,17",,,,"wait it will take you to next page, let the page load fully"
+20,,click,Accept All,button,,,"1,3,7,10,15,16,17,18",,,,on this same page you will see confirm button as well
+21,,click,Confirm,button,,,"1,3,7,10,15,16,17,18,19",,,,after this step 15 shall be done to get the code

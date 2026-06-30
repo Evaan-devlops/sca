@@ -54,5 +54,19 @@ class Settings(BaseSettings):
         validation_alias="ONETRUST_IAM_USERNAME",
     )
 
+    # Intercom automation
+    intercom_base_url: str = Field(
+        default="https://app.intercom.com",
+        validation_alias="INTERCOM_BASE_URL",
+    )
+    intercom_login_url: str = Field(
+        default="https://app.intercom.com/a/sign-in",
+        validation_alias="INTERCOM_LOGIN_URL",
+    )
+    intercom_timeout_ms: int = Field(
+        default=120000,
+        validation_alias="INTERCOM_TIMEOUT_MS",
+    )
+
 
 settings = Settings()

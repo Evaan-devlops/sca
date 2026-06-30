@@ -15,6 +15,7 @@ from app.core.errors import (
 )
 from app.features.onetrust.browser import browser_manager
 from app.features.onetrust.router import router as onetrust_router
+from app.features.intercom.router import router as intercom_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -42,6 +43,7 @@ app.add_exception_handler(AppError, app_error_handler)  # type: ignore[arg-type]
 app.add_exception_handler(Exception, global_exception_handler)
 
 app.include_router(onetrust_router)
+app.include_router(intercom_router)
 
 
 class HealthResponse(BaseModel):

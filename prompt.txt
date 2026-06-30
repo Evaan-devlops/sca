@@ -25,3 +25,15 @@ Same task is run again
 NORMAL mode uses the generated tool successfully
         ↓
 Task report contains actual token usage
+
+Chat command mapping (for Copilot CLI):
+- If user types: "process ticket <ticket-number>" — the CLI should call the Intercom automation endpoint to process that ticket, extract the URL, and start the OneTrust add flow.
+
+Example mapping:
+1) User: process ticket 112670879
+2) CLI: POST /intercom/process_ticket/stream {"ticket": "112670879"}
+3) CLI streams NDJSON events showing each step (open Intercom, click SSO, search ticket, open conversation, extract URL, call OneTrust)
+
+Notes:
+- The backend exposes `/intercom/process_ticket` and `/intercom/process_ticket/stream` endpoints.
+- The Intercom flow extracts a domain like `test2345.com` from the ticket body and calls OneTrust `add_app_flow` with that URL.

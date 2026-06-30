@@ -61,6 +61,7 @@ ONETRUST_EMAIL=your.email@pfizer.com
 PLAYWRIGHT_HEADLESS=false
 PLAYWRIGHT_USER_DATA_DIR=.playwright/onetrust-profile
 PLAYWRIGHT_TIMEOUT_MS=90000
+PLAYWRIGHT_BROWSER_CHANNEL=msedge
 ONETRUST_SCAN_TIMEOUT_MS=300000
 ONETRUST_MANUAL_LOGIN_TIMEOUT_MS=600000
 ONETRUST_IAM_USERNAME=
@@ -83,6 +84,21 @@ POST http://localhost:8000/auth/start
 {}
 ```
 Navigates to login URL, fills email, waits 3 s, returns state immediately. Returns `"status": "logged in"`, `"manual login required"`, or `"SSO pending"`.
+
+**1c. Process an Intercom ticket**
+```
+POST http://localhost:8000/intercom/process_ticket
+{"ticket": "112670879"}
+```
+
+This new flow automates Intercom ticket processing, including:
+- opening Intercom and clicking the SSO button
+- searching for the ticket number
+- clicking the ticket preview and waiting for the details panel
+- extracting the URL/domain from the ticket text (e.g. `test2345.com`)
+- passing the extracted URL into the existing OneTrust `add_app_flow`
+
+Use `/intercom/process_ticket/stream` for progressive NDJSON step updates.
 
 If IAM login is detected — enter credentials in the opened browser, then call `GET /auth/status`.
 
@@ -126,6 +142,8 @@ GET http://localhost:8000/mapper/default
 | POST | `/add_app/stream` | Same as above, NDJSON step stream |
 | POST | `/filter_code` | Find website, verify scan, extract data-domain-script |
 | POST | `/filter_code/stream` | Same as above, NDJSON step stream |
+| POST | `/intercom/process_ticket` | Process an Intercom ticket, extract URL, and start OneTrust flow |
+| POST | `/intercom/process_ticket/stream` | Same as above, NDJSON step stream |
 | GET | `/mapper/default` | Default experience kit |
 | POST | `/mapper/resolve` | Resolve URL to experience kit |
 

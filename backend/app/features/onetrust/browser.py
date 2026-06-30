@@ -28,11 +28,12 @@ class BrowserManager:
         self._playwright = await async_playwright().start()
         self._context = await self._playwright.chromium.launch_persistent_context(
             str(user_data_dir),
+            channel=settings.playwright_browser_channel,
             headless=settings.playwright_headless,
             slow_mo=200,
             args=["--start-maximized"],
         )
-        logger.info("Chromium launched (headless=%s)", settings.playwright_headless)
+        logger.info("Chromium launched via channel=%s (headless=%s)", settings.playwright_browser_channel, settings.playwright_headless)
 
         pages = self._context.pages
         if pages:

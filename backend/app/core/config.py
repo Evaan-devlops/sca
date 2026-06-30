@@ -54,6 +54,11 @@ class Settings(BaseSettings):
         validation_alias="ONETRUST_IAM_USERNAME",
     )
 
+    playwright_browser_channel: str = Field(
+        default="msedge",
+        validation_alias="PLAYWRIGHT_BROWSER_CHANNEL",
+    )
+
     # Intercom automation
     intercom_base_url: str = Field(
         default="https://app.intercom.com",

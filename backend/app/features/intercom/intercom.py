@@ -38,15 +38,16 @@ async def process_ticket_flow(ticket_number: str, emit: Callable[[dict], Any] | 
         await _emit({"step": step, "status": "failed", "message": str(exc), "screenshot": screenshot})
         return {"status": "error", "failed_step": step, "steps": steps, "current_url": page.url}
 
-    # Step: click Sign in with SAML SSO
+    # Step: click Sign in with SAML SSO on Intercom login page
     step = "click_sso_button"
     try:
-        await _emit({"step": step, "status": "started", "message": "Clicking SSO button"})
+        await _emit({"step": step, "status": "started", "message": "Clicking Intercom SAML SSO link"})
         sso_locators = [
+            page.get_by_role("link", name=re.compile(r"Sign in with SAML SSO", re.I)),
             page.get_by_role("button", name=re.compile(r"Sign in with SAML SSO", re.I)),
             page.get_by_text("Sign in with SAML SSO", exact=True),
-            page.get_by_text("Sign in with SSO", exact=False),
-            page.locator("button:has-text('SAML')"),
+            page.locator("a:has-text('Sign in with SAML SSO')"),
+            page.locator("button:has-text('Sign in with SAML SSO')"),
         ]
         clicked = False
         for loc in sso_locators:
@@ -59,25 +60,82 @@ async def process_ticket_flow(ticket_number: str, emit: Callable[[dict], Any] | 
                 continue
 
         if not clicked:
-            # fallback: try any button with 'Sign' text
+            # fallback: try any text link/button containing 'SAML'
             try:
-                btn = page.get_by_role("button", name=re.compile(r"Sign in", re.I))
-                if await btn.count() > 0:
-                    await btn.first.click()
+                loc = page.locator("text=Sign in with SAML")
+                if await loc.count() > 0:
+                    await loc.first.click()
                     clicked = True
             except Exception:
                 pass
 
-        if clicked:
-            # wait for subsequent navigation or network idle
+        if not clicked:
+            raise RuntimeError("Could not locate Intercom SAML SSO link/button")
+
+        try:
+            await page.wait_for_load_state("networkidle", timeout=settings.intercom_timeout_ms)
+        except Exception:
+            pass
+
+        await _emit({"step": step, "status": "completed", "current_url": page.url})
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("%s failed: %s", step, exc)
+        screenshot = await browser_manager.screenshot_on_error(step)
+        await _emit({"step": step, "status": "failed", "message": str(exc), "screenshot": screenshot})
+        return {"status": "error", "failed_step": step, "steps": steps, "current_url": page.url}
+
+    # Step: fill work email on SAML page
+    step = "fill_saml_email"
+    try:
+        await _emit({"step": step, "status": "started", "message": "Filling work email on Intercom SAML page"})
+        email = settings.onetrust_email
+        if not email:
+            raise RuntimeError("ONETRUST_EMAIL is required for Intercom SAML login")
+
+        email_input = None
+        email_candidates = [
+            page.get_by_label(re.compile(r"Work email", re.I)),
+            page.get_by_placeholder(re.compile(r"email", re.I)),
+            page.locator("input[type='email']"),
+            page.locator("input[name*='email' i]"),
+        ]
+        for candidate in email_candidates:
             try:
-                await page.wait_for_load_state("networkidle", timeout=settings.intercom_timeout_ms)
+                if await candidate.count() > 0:
+                    email_input = candidate.first
+                    break
             except Exception:
-                # not fatal; proceed and wait for inbox/search
-                pass
-            await _emit({"step": step, "status": "completed", "current_url": page.url})
-        else:
-            raise RuntimeError("Could not locate SSO sign-in button")
+                continue
+
+        if email_input is None:
+            raise RuntimeError("Could not locate work email input on SAML page")
+
+        await email_input.fill(email)
+
+        submit_locators = [
+            page.get_by_role("button", name=re.compile(r"Sign in with SAML SSO", re.I)),
+            page.get_by_text("Sign in with SAML SSO", exact=True),
+            page.locator("button:has-text('Sign in with SAML SSO')"),
+        ]
+        submitted = False
+        for loc in submit_locators:
+            try:
+                if await loc.count() > 0:
+                    await loc.first.click()
+                    submitted = True
+                    break
+            except Exception:
+                continue
+
+        if not submitted:
+            raise RuntimeError("Could not locate SAML SSO submit button")
+
+        try:
+            await page.wait_for_load_state("networkidle", timeout=settings.intercom_timeout_ms)
+        except Exception:
+            pass
+
+        await _emit({"step": step, "status": "completed", "current_url": page.url})
     except Exception as exc:  # noqa: BLE001
         logger.exception("%s failed: %s", step, exc)
         screenshot = await browser_manager.screenshot_on_error(step)

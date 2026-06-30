@@ -11,7 +11,7 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 cd backend
 pip install -r requirements.txt
-python -m playwright install chromium
+python -m playwright install
 cp .env.example .env
 code .env                  # fill in ONETRUST_EMAIL
 python check_setup.py
@@ -35,7 +35,7 @@ py -3.12 -m venv .venv
 python -m pip install --upgrade pip
 cd backend
 pip install -r requirements.txt
-python -m playwright install chromium
+python -m playwright install
 copy .env.example .env
 code .env
 python check_setup.py
@@ -65,6 +65,8 @@ PLAYWRIGHT_BROWSER_CHANNEL=msedge
 ONETRUST_SCAN_TIMEOUT_MS=300000
 ONETRUST_MANUAL_LOGIN_TIMEOUT_MS=600000
 ONETRUST_IAM_USERNAME=
+
+# Intercom login uses ONETRUST_EMAIL to fill the Work email field on the SAML login page.
 ```
 
 ## Run
@@ -92,8 +94,10 @@ POST http://localhost:8000/intercom/process_ticket
 ```
 
 This new flow automates Intercom ticket processing, including:
-- opening Intercom and clicking the SSO button
-- searching for the ticket number
+- opening Intercom and clicking the SAML SSO link under the Continue button
+- loading the Intercom SAML email page and filling `ONETRUST_EMAIL`
+- clicking the `Sign in with SAML SSO` button on the SAML page
+- searching for the ticket number in the inbox
 - clicking the ticket preview and waiting for the details panel
 - extracting the URL/domain from the ticket text (e.g. `test2345.com`)
 - passing the extracted URL into the existing OneTrust `add_app_flow`
